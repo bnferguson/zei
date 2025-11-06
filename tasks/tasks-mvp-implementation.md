@@ -68,19 +68,19 @@ Update the file after completing each sub-task, not just after completing an ent
   - [x] 1.10 Create tests in `src/config.zig` for valid and invalid configs
   - [x] 1.11 Test parsing ready for example/zei.yaml (requires build to verify)
 
-- [ ] 2.0 Service Data Structures and State Management
-  - [ ] 2.1 Create `src/service.zig` module
-  - [ ] 2.2 Define `ServiceState` enum (stopped, starting, running, stopping, failed, exited)
-  - [ ] 2.3 Define `ServiceInfo` struct (pid, state, start_time, restart_count, exit_code)
-  - [ ] 2.4 Create `src/service_manager.zig` module
-  - [ ] 2.5 Define `ServiceManager` struct with HashMap or ArrayList for services
-  - [ ] 2.6 Implement `init()` to create service manager
-  - [ ] 2.7 Implement `registerService()` to add service to registry
-  - [ ] 2.8 Implement `getService()` to lookup service by name or PID
-  - [ ] 2.9 Implement `updateState()` to change service state
-  - [ ] 2.10 Implement `incrementRestartCount()` for restart tracking
-  - [ ] 2.11 Implement `getAllRunningServices()` helper
-  - [ ] 2.12 Create `src/service_manager.test.zig` with state management tests
+- [x] 2.0 Service Data Structures and State Management
+  - [x] 2.1 Create `src/service.zig` module
+  - [x] 2.2 Define `ServiceState` enum (stopped, starting, running, stopping, failed, exited)
+  - [x] 2.3 Define `ServiceInfo` struct (pid, state, start_time, restart_count, exit_code, exit_signal)
+  - [x] 2.4 Create `src/service_manager.zig` module
+  - [x] 2.5 Define `ServiceManager` struct with HashMap for services and PID tracking
+  - [x] 2.6 Implement `init()` to create service manager
+  - [x] 2.7 Implement `registerService()` to add service to registry
+  - [x] 2.8 Implement `getServiceByName()` and `getServiceByPid()` to lookup services
+  - [x] 2.9 Implement `updateState()` to change service state
+  - [x] 2.10 Implement `incrementRestartCount()` for restart tracking
+  - [x] 2.11 Implement `getAllRunningServices()` and helper methods
+  - [x] 2.12 Create comprehensive tests in both modules
 
 ---
 
@@ -231,14 +231,13 @@ Update the file after completing each sub-task, not just after completing an ent
 
 ### Completed Phases
 - [x] Phase 0: Project setup (build.zig, main.zig skeleton)
+- [x] Phase 1: Configuration and Data Structures (Tasks 1-2) ✓
 
 ### Current Phase
-- [ ] Phase 1: Configuration and Data Structures (Tasks 1-2)
-  - [x] Task 1.0: YAML Configuration Parsing ✓
-  - [ ] Task 2.0: Service Data Structures (next)
+- [ ] Phase 2: Process Management (Tasks 3-4)
+  - Next: Task 4.0 Privilege Escalation (recommended before Task 3.0)
 
 ### Upcoming Phases
-- [ ] Phase 2: Process Management (Tasks 3-4)
 - [ ] Phase 3: Monitoring and Lifecycle (Tasks 5-6)
 - [ ] Phase 4: Logging and I/O (Task 7)
 - [ ] Phase 5: Shutdown and Signals (Task 8)

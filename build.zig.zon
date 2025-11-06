@@ -13,7 +13,7 @@
     .dependencies = .{
         .yaml = .{
             .url = "https://github.com/kubkon/zig-yaml/archive/refs/tags/0.1.1.tar.gz",
-            .hash = "1220d7bb6a1f06110aba0a326bb595ad6e3b7bdb710b012b3e1a035ddb3bc588c6b6",
+            .hash = "122042c0bdd8004419c15ff81b269a4f65ea8fd9ca07a84d7bf4cb99dc038eb210dc",
         },
     },
 }

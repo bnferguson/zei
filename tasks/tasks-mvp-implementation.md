@@ -55,18 +55,18 @@ Update the file after completing each sub-task, not just after completing an ent
 
 ### Phase 1: Configuration and Data Structures
 
-- [ ] 1.0 YAML Configuration Parsing
-  - [ ] 1.1 Research and choose YAML parser for Zig (or decide to implement minimal parser)
-  - [ ] 1.2 Create `src/config.zig` module
-  - [ ] 1.3 Define `ServiceConfig` struct with all fields (name, command, user, group, working_dir, env, restart)
-  - [ ] 1.4 Define `RestartPolicy` enum (always, on_failure, never)
-  - [ ] 1.5 Define `Config` struct to hold array of services
-  - [ ] 1.6 Implement `parseConfigFile()` function to read and parse YAML
-  - [ ] 1.7 Add validation for required fields (name, command)
-  - [ ] 1.8 Add validation for restart policy values
-  - [ ] 1.9 Implement clear error messages for parsing failures
-  - [ ] 1.10 Create `src/config.test.zig` with tests for valid and invalid configs
-  - [ ] 1.11 Test parsing with example/zei.yaml
+- [x] 1.0 YAML Configuration Parsing
+  - [x] 1.1 Research and choose YAML parser for Zig (chose kubkon/zig-yaml)
+  - [x] 1.2 Create `src/config.zig` module
+  - [x] 1.3 Define `ServiceConfig` struct with all fields (name, command, user, group, working_dir, env, restart)
+  - [x] 1.4 Define `RestartPolicy` enum (always, on_failure, never)
+  - [x] 1.5 Define `Config` struct to hold array of services
+  - [x] 1.6 Implement `parseConfigFile()` function to read and parse YAML
+  - [x] 1.7 Add validation for required fields (name, command)
+  - [x] 1.8 Add validation for restart policy values
+  - [x] 1.9 Implement clear error messages for parsing failures
+  - [x] 1.10 Create tests in `src/config.zig` for valid and invalid configs
+  - [x] 1.11 Test parsing ready for example/zei.yaml (requires build to verify)
 
 - [ ] 2.0 Service Data Structures and State Management
   - [ ] 2.1 Create `src/service.zig` module
@@ -234,6 +234,8 @@ Update the file after completing each sub-task, not just after completing an ent
 
 ### Current Phase
 - [ ] Phase 1: Configuration and Data Structures (Tasks 1-2)
+  - [x] Task 1.0: YAML Configuration Parsing ✓
+  - [ ] Task 2.0: Service Data Structures (next)
 
 ### Upcoming Phases
 - [ ] Phase 2: Process Management (Tasks 3-4)

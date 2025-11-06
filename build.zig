@@ -7,6 +7,12 @@ pub fn build(b: *std.Build) void {
     // Standard optimization options
     const optimize = b.standardOptimizeOption(.{});
 
+    // Add YAML dependency
+    const yaml = b.dependency("yaml", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Create the executable
     const exe = b.addExecutable(.{
         .name = "zei",
@@ -17,6 +23,9 @@ pub fn build(b: *std.Build) void {
 
     // Enable static linking for container use
     exe.linkage = .static;
+
+    // Add YAML module to executable
+    exe.root_module.addImport("yaml", yaml.module("yaml"));
 
     // Install the executable
     b.installArtifact(exe);
@@ -40,6 +49,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+
+    // Add YAML module to tests
+    unit_tests.root_module.addImport("yaml", yaml.module("yaml"));
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
 

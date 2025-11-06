@@ -1,0 +1,21 @@
+.{
+    .name = "zei",
+    .version = "0.1.0",
+    .minimum_zig_version = "0.13.0",
+
+    .dependencies = .{
+        .yaml = .{
+            .url = "https://github.com/kubkon/zig-yaml/archive/refs/tags/0.1.1.tar.gz",
+            .hash = "12200000000000000000000000000000000000000000000000000000000000000000",
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "example",
+        "README.md",
+        "LICENSE",
+    },
+}

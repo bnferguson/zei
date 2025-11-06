@@ -129,18 +129,18 @@ Update the file after completing each sub-task, not just after completing an ent
   - [x] 5.10 Log service exit and restart decisions
   - [x] 5.11 Create comprehensive tests in module (9 test cases)
 
-- [ ] 6.0 Process Reaping and Zombie Prevention
-  - [ ] 6.1 Create `src/reaper.zig` module
-  - [ ] 6.2 Implement `setupReaper()` to register for SIGCHLD
-  - [ ] 6.3 Create SIGCHLD signal handler function
-  - [ ] 6.4 In signal handler: call waitpid(-1, WNOHANG) in loop
-  - [ ] 6.5 Match reaped PID to managed services
-  - [ ] 6.6 Extract exit code and signal information
-  - [ ] 6.7 Update service info with exit details
-  - [ ] 6.8 Handle orphaned processes (PIDs not in service registry)
-  - [ ] 6.9 Log all reaped processes
-  - [ ] 6.10 Implement safety to prevent signal handler issues
-  - [ ] 6.11 Create `src/reaper.test.zig` with reaping tests
+- [x] 6.0 Process Reaping and Zombie Prevention
+  - [x] 6.1 Create `src/reaper.zig` module
+  - [x] 6.2 Implement `setupReaper()` to configure SIGCHLD handling
+  - [x] 6.3 Create `reapProcesses()` function as main reaping loop
+  - [x] 6.4 Call waitpid(-1, WNOHANG) in loop to reap all zombies
+  - [x] 6.5 Match reaped PIDs to managed services via ServiceManager
+  - [x] 6.6 Extract exit code and signal information using W.* macros
+  - [x] 6.7 Update service info via monitor.handleServiceExit()
+  - [x] 6.8 Handle orphaned processes (PIDs not in registry)
+  - [x] 6.9 Log all reaped processes (managed and orphaned)
+  - [x] 6.10 Implement safe reaping with proper error handling
+  - [x] 6.11 Create comprehensive tests in module (9 test cases)
 
 ---
 
@@ -233,14 +233,13 @@ Update the file after completing each sub-task, not just after completing an ent
 - [x] Phase 0: Project setup (build.zig, main.zig skeleton)
 - [x] Phase 1: Configuration and Data Structures (Tasks 1-2) ✓
 - [x] Phase 2: Process Management (Tasks 3-4) ✓
+- [x] Phase 3: Monitoring and Lifecycle (Tasks 5-6) ✓
 
 ### Current Phase
-- [ ] Phase 3: Monitoring and Lifecycle (Tasks 5-6)
-  - [x] Task 5.0: Service Monitoring and Restart Logic ✓
-  - [ ] Task 6.0: Process Reaping and Zombie Prevention (next)
+- [ ] Phase 4: Logging and I/O (Task 7)
+  - Next: Task 7.0 Logging Infrastructure
 
 ### Upcoming Phases
-- [ ] Phase 4: Logging and I/O (Task 7)
 - [ ] Phase 5: Shutdown and Signals (Task 8)
 - [ ] Phase 6: Integration (Task 9)
 - [ ] Phase 7: Testing and Validation (Task 10)

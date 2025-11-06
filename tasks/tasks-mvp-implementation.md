@@ -116,18 +116,18 @@ Update the file after completing each sub-task, not just after completing an ent
 
 ### Phase 3: Monitoring and Lifecycle
 
-- [ ] 5.0 Service Monitoring and Restart Logic
-  - [ ] 5.1 Create `src/monitor.zig` module
-  - [ ] 5.2 Implement `shouldRestart()` function to evaluate restart policy
-  - [ ] 5.3 Check restart policy: always -> return true
-  - [ ] 5.4 Check restart policy: on_failure -> return true if exit_code != 0
-  - [ ] 5.5 Check restart policy: never -> return false
-  - [ ] 5.6 Implement `handleServiceExit()` to process service termination
-  - [ ] 5.7 Update service state based on exit
-  - [ ] 5.8 Increment restart counter if restarting
-  - [ ] 5.9 Call service restart function if needed
-  - [ ] 5.10 Log service exit and restart decisions
-  - [ ] 5.11 Create `src/monitor.test.zig` with restart policy tests
+- [x] 5.0 Service Monitoring and Restart Logic
+  - [x] 5.1 Create `src/monitor.zig` module
+  - [x] 5.2 Implement `shouldRestart()` function to evaluate restart policy
+  - [x] 5.3 Check restart policy: always -> return true
+  - [x] 5.4 Check restart policy: on_failure -> return true if exit_code != 0
+  - [x] 5.5 Check restart policy: never -> return false
+  - [x] 5.6 Implement `handleServiceExit()` to process service termination
+  - [x] 5.7 Update service state based on exit (via markExited/markSignaled)
+  - [x] 5.8 Increment restart counter if restarting
+  - [x] 5.9 Return bool indicating if restart is needed
+  - [x] 5.10 Log service exit and restart decisions
+  - [x] 5.11 Create comprehensive tests in module (9 test cases)
 
 - [ ] 6.0 Process Reaping and Zombie Prevention
   - [ ] 6.1 Create `src/reaper.zig` module
@@ -236,7 +236,8 @@ Update the file after completing each sub-task, not just after completing an ent
 
 ### Current Phase
 - [ ] Phase 3: Monitoring and Lifecycle (Tasks 5-6)
-  - Next: Task 5.0 Service Monitoring and Restart Logic
+  - [x] Task 5.0: Service Monitoring and Restart Logic ✓
+  - [ ] Task 6.0: Process Reaping and Zombie Prevention (next)
 
 ### Upcoming Phases
 - [ ] Phase 4: Logging and I/O (Task 7)

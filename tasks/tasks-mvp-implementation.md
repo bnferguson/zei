@@ -86,18 +86,18 @@ Update the file after completing each sub-task, not just after completing an ent
 
 ### Phase 2: Process Management
 
-- [ ] 3.0 Process Management and Spawning
-  - [ ] 3.1 Create `src/process.zig` module
-  - [ ] 3.2 Implement `parseCommand()` to handle both string and array command formats
-  - [ ] 3.3 Implement `createPipes()` to set up stdout/stderr pipes
-  - [ ] 3.4 Implement `spawnProcess()` function using fork()
-  - [ ] 3.5 In child process: set working directory with chdir()
-  - [ ] 3.6 In child process: set environment variables
-  - [ ] 3.7 In child process: redirect stdout/stderr to pipes
-  - [ ] 3.8 In child process: call execve() with command
-  - [ ] 3.9 In parent process: close unused pipe ends and return PID
-  - [ ] 3.10 Implement error handling for fork, chdir, execve failures
-  - [ ] 3.11 Create `src/process.test.zig` with process spawning tests
+- [x] 3.0 Process Management and Spawning
+  - [x] 3.1 Create `src/process.zig` module
+  - [x] 3.2 Implement `parseCommand()` to convert command array to argv format
+  - [x] 3.3 Implement `createPipes()` to set up stdout/stderr pipes
+  - [x] 3.4 Implement `spawnProcess()` function using fork()
+  - [x] 3.5 In child process: set working directory with chdir()
+  - [x] 3.6 In child process: prepare and set environment variables
+  - [x] 3.7 In child process: redirect stdout/stderr to pipes via dup2()
+  - [x] 3.8 In child process: call execvpe() with command
+  - [x] 3.9 In parent process: close unused pipe ends and return PID
+  - [x] 3.10 Implement error handling for fork, chdir, execve failures
+  - [x] 3.11 Create comprehensive tests in module (5 test cases)
 
 - [x] 4.0 Privilege Escalation System
   - [x] 4.1 Create `src/privilege.zig` module
@@ -232,14 +232,13 @@ Update the file after completing each sub-task, not just after completing an ent
 ### Completed Phases
 - [x] Phase 0: Project setup (build.zig, main.zig skeleton)
 - [x] Phase 1: Configuration and Data Structures (Tasks 1-2) ✓
+- [x] Phase 2: Process Management (Tasks 3-4) ✓
 
 ### Current Phase
-- [ ] Phase 2: Process Management (Tasks 3-4)
-  - [x] Task 4.0: Privilege Escalation System ✓
-  - [ ] Task 3.0: Process Management and Spawning (next)
+- [ ] Phase 3: Monitoring and Lifecycle (Tasks 5-6)
+  - Next: Task 5.0 Service Monitoring and Restart Logic
 
 ### Upcoming Phases
-- [ ] Phase 3: Monitoring and Lifecycle (Tasks 5-6)
 - [ ] Phase 4: Logging and I/O (Task 7)
 - [ ] Phase 5: Shutdown and Signals (Task 8)
 - [ ] Phase 6: Integration (Task 9)

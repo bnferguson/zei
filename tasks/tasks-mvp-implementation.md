@@ -99,18 +99,18 @@ Update the file after completing each sub-task, not just after completing an ent
   - [ ] 3.10 Implement error handling for fork, chdir, execve failures
   - [ ] 3.11 Create `src/process.test.zig` with process spawning tests
 
-- [ ] 4.0 Privilege Escalation System
-  - [ ] 4.1 Create `src/privilege.zig` module
-  - [ ] 4.2 Implement `getCurrentUid()` and `getCurrentGid()` wrappers
-  - [ ] 4.3 Implement `lookupUser()` to get UID from username (parse /etc/passwd or use system call)
-  - [ ] 4.4 Implement `lookupGroup()` to get GID from group name (parse /etc/group or use system call)
-  - [ ] 4.5 Define `PrivilegeContext` struct to save original UID/GID
-  - [ ] 4.6 Implement `escalatePrivileges()` to save current UID/GID and setuid(0)
-  - [ ] 4.7 Implement `switchToUser()` to setgid() and setuid() to target user
-  - [ ] 4.8 Implement `dropPrivileges()` to restore original UID/GID
-  - [ ] 4.9 Add verification that setuid binary is properly configured
-  - [ ] 4.10 Add safety checks to prevent privilege leaks
-  - [ ] 4.11 Create `src/privilege.test.zig` with privilege management tests (may need root)
+- [x] 4.0 Privilege Escalation System
+  - [x] 4.1 Create `src/privilege.zig` module
+  - [x] 4.2 Implement `getCurrentUid()`, `getCurrentGid()`, `getCurrentEuid()`, `getCurrentEgid()` wrappers
+  - [x] 4.3 Implement `lookupUser()` to get UID from username (parses /etc/passwd)
+  - [x] 4.4 Implement `lookupGroup()` to get GID from group name (parses /etc/group)
+  - [x] 4.5 Define `PrivilegeContext` struct to save original UID/GID/EUID/EGID
+  - [x] 4.6 Implement `escalatePrivileges()` to save current state and setuid(0)
+  - [x] 4.7 Implement `switchToUser()` to setgid() and setuid() to target user
+  - [x] 4.8 Implement `dropPrivileges()` to restore original UID/GID
+  - [x] 4.9 Add `verifySetuidConfiguration()` to check binary setup
+  - [x] 4.10 Add safety checks: verify escalation, prevent re-escalation after drop
+  - [x] 4.11 Create comprehensive tests in module (8 test cases, root tests skip gracefully)
 
 ---
 
@@ -235,7 +235,8 @@ Update the file after completing each sub-task, not just after completing an ent
 
 ### Current Phase
 - [ ] Phase 2: Process Management (Tasks 3-4)
-  - Next: Task 4.0 Privilege Escalation (recommended before Task 3.0)
+  - [x] Task 4.0: Privilege Escalation System ✓
+  - [ ] Task 3.0: Process Management and Spawning (next)
 
 ### Upcoming Phases
 - [ ] Phase 3: Monitoring and Lifecycle (Tasks 5-6)

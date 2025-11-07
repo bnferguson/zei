@@ -253,18 +253,18 @@ fn parseCommand(allocator: std.mem.Allocator, command_node: anytype) ![][]const 
     } else if (command_node == .list) {
         // Command is an array
         const cmd_list = command_node.list;
-        if (cmd_list.items.len == 0) {
+        if (cmd_list.len == 0) {
             return error.EmptyCommand;
         }
 
         var args: std.ArrayList([]const u8) = .empty;
-        try args.ensureTotalCapacity(allocator, cmd_list.items.len);
+        try args.ensureTotalCapacity(allocator, cmd_list.len);
         errdefer {
             for (args.items) |arg| allocator.free(arg);
             args.deinit(allocator);
         }
 
-        for (cmd_list.items) |item| {
+        for (cmd_list) |item| {
             if (item != .scalar) {
                 return error.CommandArrayNotStrings;
             }

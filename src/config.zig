@@ -168,7 +168,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, yaml_content: []const u8) !Conf
         errdefer if (working_dir) |wd| allocator.free(wd);
 
         // Parse environment variables
-        const env = if (service_map.get("env")) |env_node| blk: {
+        var env = if (service_map.get("env")) |env_node| blk: {
             if (env_node != .map) break :blk null;
 
             var env_map = std.StringHashMap([]const u8).init(allocator);

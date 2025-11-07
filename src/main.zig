@@ -194,6 +194,13 @@ fn mainEventLoop(allocator: std.mem.Allocator, manager: *ServiceManager) !void {
     posix.sigaddset(&mask, posix.SIG.INT);
     posix.sigaddset(&mask, posix.SIG.CHLD);
 
+    std.debug.print("[init] Signal mask size: {} bytes, waiting for signals: TERM={}, INT={}, CHLD={}\n", .{
+        @sizeOf(@TypeOf(mask)),
+        posix.SIG.TERM,
+        posix.SIG.INT,
+        posix.SIG.CHLD,
+    });
+
     while (!shutdown_requested) {
         if (builtin.os.tag == .linux) {
             // Linux: Use sigtimedwait via syscall
@@ -202,21 +209,38 @@ fn mainEventLoop(allocator: std.mem.Allocator, manager: *ServiceManager) !void {
                 .nsec = 0,
             };
 
-            const sig = linux.syscall3(.rt_sigtimedwait, @intFromPtr(&mask), @intFromPtr(@as(?*anyopaque, null)), @intFromPtr(&timeout));
+            // rt_sigtimedwait(sigset_t *set, siginfo_t *info, timespec *timeout, size_t sigsetsize)
+            const sig = linux.syscall4(
+                .rt_sigtimedwait,
+                @intFromPtr(&mask),
+                @intFromPtr(@as(?*anyopaque, null)),
+                @intFromPtr(&timeout),
+                8, // Linux expects 8 bytes for sigset size (_NSIG/8 = 64/8)
+            );
 
-            if (sig < 0) {
+            // Check if syscall failed
+            if (@as(isize, @bitCast(sig)) < 0) {
+                const err = posix.errno(sig);
+                // EAGAIN means timeout (no signal received)
+                if (err != .AGAIN and err != .INTR) {
+                    std.debug.print("[init] sigtimedwait error: {}\n", .{err});
+                }
                 // Timeout or error - check for zombies anyway
                 try handleReaping(allocator, manager);
                 continue;
             }
 
-            // Handle the signal
-            if (sig == posix.SIG.TERM or sig == posix.SIG.INT) {
-                const sig_name = if (sig == posix.SIG.TERM) "SIGTERM" else "SIGINT";
+            // Handle the signal (sig contains the signal number)
+            const sig_num: i32 = @intCast(sig);
+            std.debug.print("[init] Received signal: {}\n", .{sig_num});
+
+            if (sig_num == posix.SIG.TERM or sig_num == posix.SIG.INT) {
+                const sig_name = if (sig_num == posix.SIG.TERM) "SIGTERM" else "SIGINT";
                 std.debug.print("\n[init] Received {s}, initiating shutdown...\n", .{sig_name});
                 shutdown_requested = true;
-            } else if (sig == posix.SIG.CHLD) {
+            } else if (sig_num == posix.SIG.CHLD) {
                 // Child process exited
+                std.debug.print("[init] Child process exited, reaping...\n", .{});
                 try handleReaping(allocator, manager);
             }
         } else {

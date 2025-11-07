@@ -81,9 +81,12 @@ pub fn reapProcesses(
         // Use WNOHANG to not block
         const pid = linux.waitpid(-1, &status, linux.W.NOHANG);
 
-        if (pid < 0) {
+        // Convert to signed to check for errors (waitpid returns -1 on error)
+        const pid_signed = @as(isize, @bitCast(pid));
+
+        if (pid_signed < 0) {
             // No more children or error
-            const err = posix.errno(@as(usize, @bitCast(@as(isize, pid))));
+            const err = posix.errno(pid);
             if (err == .CHILD) {
                 // No child processes, this is normal
                 break;
@@ -101,7 +104,7 @@ pub fn reapProcesses(
         }
 
         // We reaped a process
-        const pid_i32: std.posix.pid_t = @intCast(pid);
+        const pid_i32: std.posix.pid_t = @intCast(pid_signed);
         const was_managed = manager.hasPid(pid_i32);
         const reaped = ReapedProcess.fromWaitStatus(pid_i32, status, was_managed);
 

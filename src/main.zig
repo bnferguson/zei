@@ -211,11 +211,11 @@ fn mainEventLoop(allocator: std.mem.Allocator, manager: *ServiceManager) !void {
             }
 
             // Handle the signal
-            if (sig == @intFromEnum(posix.SIG.TERM) or sig == @intFromEnum(posix.SIG.INT)) {
-                const sig_name = if (sig == @intFromEnum(posix.SIG.TERM)) "SIGTERM" else "SIGINT";
+            if (sig == posix.SIG.TERM or sig == posix.SIG.INT) {
+                const sig_name = if (sig == posix.SIG.TERM) "SIGTERM" else "SIGINT";
                 std.debug.print("\n[init] Received {s}, initiating shutdown...\n", .{sig_name});
                 shutdown_requested = true;
-            } else if (sig == @intFromEnum(posix.SIG.CHLD)) {
+            } else if (sig == posix.SIG.CHLD) {
                 // Child process exited
                 try handleReaping(allocator, manager);
             }

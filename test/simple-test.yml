@@ -1,0 +1,7 @@
+services:
+  - name: simple-hello
+    command:
+      - /bin/echo
+      - "Init system is working!"
+    user: nobody
+    restart: never

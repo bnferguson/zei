@@ -83,7 +83,7 @@ pub fn reapProcesses(
 
         if (pid < 0) {
             // No more children or error
-            const err = linux.getErrno(@as(usize, @bitCast(@as(isize, pid))));
+            const err = posix.errno(@as(usize, @bitCast(@as(isize, pid))));
             if (err == .CHILD) {
                 // No child processes, this is normal
                 break;

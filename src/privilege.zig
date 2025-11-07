@@ -154,7 +154,7 @@ pub fn escalatePrivileges(ctx: *PrivilegeContext) !void {
     // Try to escalate to root
     const result = linux.setuid(0);
     if (result != 0) {
-        const err = linux.getErrno(result);
+        const err = posix.errno(result);
         if (err == .PERM) {
             std.debug.print("Failed to escalate privileges: Permission denied\n", .{});
             return PrivilegeError.PermissionDenied;
@@ -185,7 +185,7 @@ pub fn switchToUser(target_uid: linux.uid_t, target_gid: ?linux.gid_t) !void {
     if (target_gid) |gid| {
         const gid_result = linux.setgid(gid);
         if (gid_result != 0) {
-            const err = linux.getErrno(gid_result);
+            const err = posix.errno(gid_result);
             std.debug.print("Failed to setgid({d}): errno={}\n", .{ gid, err });
             return PrivilegeError.PermissionDenied;
         }
@@ -200,7 +200,7 @@ pub fn switchToUser(target_uid: linux.uid_t, target_gid: ?linux.gid_t) !void {
     // Now set user
     const uid_result = linux.setuid(target_uid);
     if (uid_result != 0) {
-        const err = linux.getErrno(uid_result);
+        const err = posix.errno(uid_result);
         std.debug.print("Failed to setuid({d}): errno={}\n", .{ target_uid, err });
         return PrivilegeError.PermissionDenied;
     }
@@ -230,7 +230,7 @@ pub fn dropPrivileges(ctx: *PrivilegeContext) !void {
     // Try to restore original GID first
     const gid_result = linux.setgid(ctx.original_gid);
     if (gid_result != 0) {
-        const err = linux.getErrno(gid_result);
+        const err = posix.errno(gid_result);
         std.debug.print("Failed to restore GID: errno={}\n", .{err});
         return PrivilegeError.PermissionDenied;
     }
@@ -238,7 +238,7 @@ pub fn dropPrivileges(ctx: *PrivilegeContext) !void {
     // Then restore original UID
     const uid_result = linux.setuid(ctx.original_uid);
     if (uid_result != 0) {
-        const err = linux.getErrno(uid_result);
+        const err = posix.errno(uid_result);
         std.debug.print("Failed to restore UID: errno={}\n", .{err});
         return PrivilegeError.PermissionDenied;
     }

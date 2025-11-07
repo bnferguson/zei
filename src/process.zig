@@ -214,9 +214,9 @@ fn prepareEnvironment(
     while (it.next()) |entry| {
         const env_str = try std.fmt.allocPrintSentinel(
             allocator,
-            0,
             "{s}={s}",
             .{ entry.key_ptr.*, entry.value_ptr.* },
+            0,
         );
         try env_list.append(allocator, env_str);
     }
@@ -227,9 +227,9 @@ fn prepareEnvironment(
         while (service_it.next()) |entry| {
             const env_str = try std.fmt.allocPrintSentinel(
                 allocator,
-                0,
                 "{s}={s}",
                 .{ entry.key_ptr.*, entry.value_ptr.* },
+                0,
             );
             try env_list.append(allocator, env_str);
         }

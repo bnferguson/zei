@@ -1,4 +1,5 @@
 const std = @import("std");
+const posix = std.posix;
 const config = @import("config.zig");
 
 /// Current state of a service
@@ -201,7 +202,7 @@ test "ServiceInfo uptime calculation" {
     info.markStarted(1234);
 
     // Sleep briefly to accumulate some uptime
-    std.time.sleep(100 * std.time.ns_per_ms); // 100ms
+    posix.nanosleep(0, 100_000_000); // 100ms
 
     // Should have some uptime now
     const uptime = info.getUptime();

@@ -195,35 +195,46 @@ fn mainEventLoop(allocator: std.mem.Allocator, manager: *ServiceManager) !void {
     posix.sigaddset(&mask, posix.SIG.CHLD);
 
     while (!shutdown_requested) {
-        // Wait for a signal with timeout
-        var timeout = linux.timespec{
-            .tv_sec = 1,
-            .tv_nsec = 0,
-        };
+        if (builtin.os.tag == .linux) {
+            // Linux: Use sigtimedwait via syscall
+            var timeout = linux.timespec{
+                .sec = 1,
+                .nsec = 0,
+            };
 
-        const sig = linux.sigtimedwait(&mask, null, &timeout);
+            const sig = linux.syscall3(.rt_sigtimedwait, @intFromPtr(&mask), @intFromPtr(@as(?*anyopaque, null)), @intFromPtr(&timeout));
 
-        if (sig < 0) {
-            // Timeout or error - check for zombies anyway
+            if (sig < 0) {
+                // Timeout or error - check for zombies anyway
+                try handleReaping(allocator, manager);
+                continue;
+            }
+
+            // Handle the signal
+            if (sig == @intFromEnum(posix.SIG.TERM) or sig == @intFromEnum(posix.SIG.INT)) {
+                const sig_name = if (sig == @intFromEnum(posix.SIG.TERM)) "SIGTERM" else "SIGINT";
+                std.debug.print("\n[init] Received {s}, initiating shutdown...\n", .{sig_name});
+                shutdown_requested = true;
+            } else if (sig == @intFromEnum(posix.SIG.CHLD)) {
+                // Child process exited
+                try handleReaping(allocator, manager);
+            }
+        } else {
+            // Non-Linux: Simple polling approach for development/testing
+            posix.nanosleep(1, 0);
             try handleReaping(allocator, manager);
-            continue;
-        }
 
-        // Handle the signal
-        if (sig == @intFromEnum(posix.SIG.TERM) or sig == @intFromEnum(posix.SIG.INT)) {
-            const sig_name = if (sig == @intFromEnum(posix.SIG.TERM)) "SIGTERM" else "SIGINT";
-            std.debug.print("\n[init] Received {s}, initiating shutdown...\n", .{sig_name});
-            shutdown_requested = true;
-        } else if (sig == @intFromEnum(posix.SIG.CHLD)) {
-            // Child process exited
-            try handleReaping(allocator, manager);
+            // Check for shutdown via global flag (would be set by signal handler)
+            if (shutdown_requested) {
+                break;
+            }
         }
     }
 }
 
 fn handleReaping(allocator: std.mem.Allocator, manager: *ServiceManager) !void {
-    const result = try reaper.reapProcesses(allocator, manager);
-    defer reaper.freeReapResult(allocator, result);
+    var result = try reaper.reapProcesses(allocator, manager);
+    defer reaper.freeReapResult(allocator, &result);
 
     // Restart services that need it
     for (result.restarts_needed.items) |service_name| {
@@ -231,8 +242,8 @@ fn handleReaping(allocator: std.mem.Allocator, manager: *ServiceManager) !void {
 
         monitor.logLifecycleEvent(service_name, .{ .restarting = service.info.restart_count });
 
-        // Small delay before restart
-        std.time.sleep(100 * std.time.ns_per_ms);
+        // Small delay before restart (100ms)
+        posix.nanosleep(0, 100_000_000);
 
         // Restart the service
         startService(allocator, manager, service_name) catch |err| {
@@ -257,7 +268,7 @@ fn shutdownAllServices(manager: *ServiceManager) !void {
     for (services) |service| {
         if (service.info.pid > 0) {
             std.debug.print("[{s}] Sending SIGTERM to PID {d}\n", .{ service.config.name, service.info.pid });
-            _ = linux.kill(service.info.pid, @intFromEnum(posix.SIG.TERM));
+            _ = linux.kill(service.info.pid, posix.SIG.TERM);
         }
     }
 
@@ -283,17 +294,17 @@ fn shutdownAllServices(manager: *ServiceManager) !void {
             for (remaining) |service| {
                 if (service.info.pid > 0) {
                     std.debug.print("[{s}] Sending SIGKILL to PID {d}\n", .{ service.config.name, service.info.pid });
-                    _ = linux.kill(service.info.pid, @intFromEnum(posix.SIG.KILL));
+                    _ = linux.kill(service.info.pid, posix.SIG.KILL);
                 }
             }
             break;
         }
 
         // Reap any exited processes
-        const result = try reaper.reapProcesses(allocator, manager);
-        reaper.freeReapResult(allocator, result);
+        var result = try reaper.reapProcesses(allocator, manager);
+        reaper.freeReapResult(allocator, &result);
 
-        std.time.sleep(100 * std.time.ns_per_ms);
+        posix.nanosleep(0, 100_000_000);
     }
 }
 

@@ -143,7 +143,7 @@ pub const ServiceManager = struct {
                 stateCount += 1;
             }
         }
-        return count;
+        return stateCount;
     }
 
     /// Get total number of registered services

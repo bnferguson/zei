@@ -108,10 +108,10 @@ pub fn spawnProcess(
         // Child process
         childProcess(service_config, argv, envp, &pipes) catch |err| {
             std.debug.print("Child process failed: {}\n", .{err});
-            os.exit(1);
+            posix.exit(1);
         };
         // Should never reach here if exec succeeds
-        os.exit(127);
+        posix.exit(127);
     } else {
         // Parent process
         // Close the write ends of the pipes (child uses these)

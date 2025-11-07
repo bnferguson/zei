@@ -101,33 +101,34 @@ pub fn reapProcesses(
         }
 
         // We reaped a process
-        const was_managed = manager.hasPid(pid);
-        const reaped = ReapedProcess.fromWaitStatus(pid, status, was_managed);
+        const pid_i32: std.posix.pid_t = @intCast(pid);
+        const was_managed = manager.hasPid(pid_i32);
+        const reaped = ReapedProcess.fromWaitStatus(pid_i32, status, was_managed);
 
         if (was_managed) {
             // This is one of our managed services
-            std.debug.print("Reaped managed process PID {d}\n", .{pid});
+            std.debug.print("Reaped managed process PID {d}\n", .{pid_i32});
 
             // Handle the exit and check if restart is needed
             const should_restart = monitor.handleServiceExit(
                 manager,
-                pid,
+                pid_i32,
                 reaped.exit_code,
                 reaped.signal,
-            ) catch |err| {
-                std.debug.print("Error handling service exit for PID {d}: {}\n", .{ pid, err });
-                false;
+            ) catch |err| blk: {
+                std.debug.print("Error handling service exit for PID {d}: {}\n", .{ pid_i32, err });
+                break :blk false;
             };
 
             if (should_restart) {
                 // Get the service name before we lose the reference
-                const service = manager.getServiceByName(getServiceNameByPid(manager, pid) orelse "") orelse continue;
+                const service = manager.getServiceByName(getServiceNameByPid(manager, pid_i32) orelse "") orelse continue;
                 const name = try allocator.dupe(u8, service.config.name);
                 try restarts_needed.append(allocator, name);
             }
         } else {
             // Orphaned process or unknown
-            std.debug.print("Reaped orphaned process PID {d}\n", .{pid});
+            std.debug.print("Reaped orphaned process PID {d}\n", .{pid_i32});
             logOrphanedProcess(reaped);
         }
 
@@ -158,7 +159,7 @@ fn logOrphanedProcess(reaped: ReapedProcess) void {
 }
 
 /// Free ReapResult resources
-pub fn freeReapResult(allocator: std.mem.Allocator, result: ReapResult) void {
+pub fn freeReapResult(allocator: std.mem.Allocator, result: *ReapResult) void {
     allocator.free(result.processes);
     for (result.restarts_needed.items) |name| {
         allocator.free(name);
@@ -208,8 +209,8 @@ test "reapProcesses - no children" {
     var manager = ServiceManager.init(std.testing.allocator);
     defer manager.deinit();
 
-    const result = try reapProcesses(std.testing.allocator, &manager);
-    defer freeReapResult(std.testing.allocator, result);
+    var result = try reapProcesses(std.testing.allocator, &manager);
+    defer freeReapResult(std.testing.allocator, &result);
 
     // Should have reaped 0 processes (no children running)
     try std.testing.expectEqual(@as(usize, 0), result.processes.len);
@@ -246,18 +247,18 @@ test "reapProcesses - with child process" {
     const pid = try posix.fork();
     if (pid == 0) {
         // Child - exit immediately
-        os.exit(0);
+        posix.exit(0);
     }
 
     // Parent - register the PID
     try manager.markStarted("test-service", pid);
 
     // Give child time to exit
-    std.time.sleep(100 * std.time.ns_per_ms);
+    posix.nanosleep(0, 100_000_000);
 
     // Reap processes
-    const result = try reapProcesses(allocator, &manager);
-    defer freeReapResult(allocator, result);
+    var result = try reapProcesses(allocator, &manager);
+    defer freeReapResult(allocator, &result);
 
     // Should have reaped 1 process
     try std.testing.expectEqual(@as(usize, 1), result.processes.len);
@@ -277,17 +278,17 @@ test "reapProcesses - orphaned process" {
     const pid = try posix.fork();
     if (pid == 0) {
         // Child - exit immediately
-        os.exit(42);
+        posix.exit(42);
     }
 
     // Don't register this PID with the manager (orphan)
 
     // Give child time to exit
-    std.time.sleep(100 * std.time.ns_per_ms);
+    posix.nanosleep(0, 100_000_000);
 
     // Reap processes
-    const result = try reapProcesses(allocator, &manager);
-    defer freeReapResult(allocator, result);
+    var result = try reapProcesses(allocator, &manager);
+    defer freeReapResult(allocator, &result);
 
     // Should have reaped the orphan
     try std.testing.expectEqual(@as(usize, 1), result.processes.len);

@@ -130,10 +130,10 @@ pub fn parseConfig(allocator: std.mem.Allocator, yaml_content: []const u8) !Conf
         const name_node = service_map.get("name") orelse {
             return error.MissingServiceName;
         };
-        if (name_node != .string) {
+        if (name_node != .scalar) {
             return error.ServiceNameNotString;
         }
-        const name = try allocator.dupe(u8, name_node.string);
+        const name = try allocator.dupe(u8, name_node.scalar);
         errdefer allocator.free(name);
 
         // Parse required field: command (can be string or array)
@@ -149,19 +149,19 @@ pub fn parseConfig(allocator: std.mem.Allocator, yaml_content: []const u8) !Conf
 
         // Parse optional fields
         const user = if (service_map.get("user")) |node|
-            if (node == .string) try allocator.dupe(u8, node.string) else null
+            if (node == .scalar) try allocator.dupe(u8, node.scalar) else null
         else
             null;
         errdefer if (user) |u| allocator.free(u);
 
         const group = if (service_map.get("group")) |node|
-            if (node == .string) try allocator.dupe(u8, node.string) else null
+            if (node == .scalar) try allocator.dupe(u8, node.scalar) else null
         else
             null;
         errdefer if (group) |g| allocator.free(g);
 
         const working_dir = if (service_map.get("working_dir")) |node|
-            if (node == .string) try allocator.dupe(u8, node.string) else null
+            if (node == .scalar) try allocator.dupe(u8, node.scalar) else null
         else
             null;
         errdefer if (working_dir) |wd| allocator.free(wd);
@@ -179,9 +179,9 @@ pub fn parseConfig(allocator: std.mem.Allocator, yaml_content: []const u8) !Conf
                 errdefer allocator.free(key);
 
                 const val_node = entry.value_ptr.*;
-                if (val_node != .string) continue;
+                if (val_node != .scalar) continue;
 
-                const value = try allocator.dupe(u8, val_node.string);
+                const value = try allocator.dupe(u8, val_node.scalar);
                 errdefer allocator.free(value);
 
                 try env_map.put(key, value);
@@ -200,9 +200,9 @@ pub fn parseConfig(allocator: std.mem.Allocator, yaml_content: []const u8) !Conf
 
         // Parse restart policy
         const restart = if (service_map.get("restart")) |node| blk: {
-            if (node != .string) break :blk RestartPolicy.always;
-            const policy = RestartPolicy.fromString(node.string) orelse {
-                std.debug.print("Warning: Invalid restart policy '{s}' for service '{s}', defaulting to 'always'\n", .{ node.string, name });
+            if (node != .scalar) break :blk RestartPolicy.always;
+            const policy = RestartPolicy.fromString(node.scalar) orelse {
+                std.debug.print("Warning: Invalid restart policy '{s}' for service '{s}', defaulting to 'always'\n", .{ node.scalar, name });
                 break :blk RestartPolicy.always;
             };
             break :blk policy;
@@ -230,7 +230,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, yaml_content: []const u8) !Conf
 
 /// Parse command field (handles both string and array formats)
 fn parseCommand(allocator: std.mem.Allocator, command_node: anytype) ![][]const u8 {
-    if (command_node == .string) {
+    if (command_node == .scalar) {
         // Command is a string - split on whitespace
         var args = std.ArrayList([]const u8).init(allocator);
         errdefer {
@@ -238,7 +238,7 @@ fn parseCommand(allocator: std.mem.Allocator, command_node: anytype) ![][]const 
             args.deinit(allocator);
         }
 
-        var it = std.mem.tokenizeAny(u8, command_node.string, " \t\n");
+        var it = std.mem.tokenizeAny(u8, command_node.scalar, " \t\n");
         while (it.next()) |token| {
             const arg = try allocator.dupe(u8, token);
             try args.append(arg);
@@ -263,10 +263,10 @@ fn parseCommand(allocator: std.mem.Allocator, command_node: anytype) ![][]const 
         }
 
         for (cmd_list.items) |item| {
-            if (item != .string) {
+            if (item != .scalar) {
                 return error.CommandArrayNotStrings;
             }
-            const arg = try allocator.dupe(u8, item.string);
+            const arg = try allocator.dupe(u8, item.scalar);
             try args.append(arg);
         }
 

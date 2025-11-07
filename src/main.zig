@@ -181,18 +181,18 @@ fn startService(allocator: std.mem.Allocator, manager: *ServiceManager, service_
 fn setupSignalHandlers() !void {
     // Block SIGTERM and SIGINT so we can handle them in the event loop
     var mask = posix.sigemptyset();
-    linux.sigaddset(&mask, @intFromEnum(posix.SIG.TERM));
-    linux.sigaddset(&mask, @intFromEnum(posix.SIG.INT));
-    linux.sigaddset(&mask, @intFromEnum(posix.SIG.CHLD));
+    posix.sigaddset(&mask, posix.SIG.TERM);
+    posix.sigaddset(&mask, posix.SIG.INT);
+    posix.sigaddset(&mask, posix.SIG.CHLD);
 
     try posix.sigprocmask(posix.SIG.BLOCK, &mask, null);
 }
 
 fn mainEventLoop(allocator: std.mem.Allocator, manager: *ServiceManager) !void {
     var mask = posix.sigemptyset();
-    linux.sigaddset(&mask, @intFromEnum(posix.SIG.TERM));
-    linux.sigaddset(&mask, @intFromEnum(posix.SIG.INT));
-    linux.sigaddset(&mask, @intFromEnum(posix.SIG.CHLD));
+    posix.sigaddset(&mask, posix.SIG.TERM);
+    posix.sigaddset(&mask, posix.SIG.INT);
+    posix.sigaddset(&mask, posix.SIG.CHLD);
 
     while (!shutdown_requested) {
         // Wait for a signal with timeout

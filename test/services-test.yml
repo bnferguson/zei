@@ -1,23 +1,35 @@
 services:
   - name: hello
-    command: /bin/sh -c "echo Hello from service && sleep 5"
+    command:
+      - /bin/sh
+      - -c
+      - "echo Hello from service && sleep 5"
     user: nobody
     restart: on-failure
     environment:
       TEST_VAR: "hello_world"
 
   - name: counter
-    command: /bin/sh -c "i=0; while [ $i -lt 10 ]; do echo Count $i; i=$((i+1)); sleep 1; done"
+    command:
+      - /bin/sh
+      - -c
+      - "i=0; while [ $i -lt 10 ]; do echo Count $i; i=$((i+1)); sleep 1; done"
     user: nobody
     restart: never
 
   - name: long-running
-    command: /bin/sh -c "while true; do echo 'Service running...'; sleep 2; done"
+    command:
+      - /bin/sh
+      - -c
+      - "while true; do echo 'Service running...'; sleep 2; done"
     user: nobody
     restart: always
 
   - name: failing-service
-    command: /bin/sh -c "echo 'About to fail...' && exit 1"
+    command:
+      - /bin/sh
+      - -c
+      - "echo 'About to fail...' && exit 1"
     user: nobody
     restart: on-failure
     environment:

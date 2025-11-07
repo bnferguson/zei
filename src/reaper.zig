@@ -45,7 +45,7 @@ pub const ReapResult = struct {
 };
 
 /// Set up signal handling for SIGCHLD
-pub fn setupReaper() !void {
+pub fn setupReaper() void {
     // We'll use signalfd or manual signal handling in the event loop
     // For now, just ensure SIGCHLD isn't ignored
     var sa = posix.Sigaction{
@@ -54,7 +54,7 @@ pub fn setupReaper() !void {
         .flags = posix.SA.NOCLDSTOP | posix.SA.RESTART,
     };
 
-    try posix.sigaction(posix.SIG.CHLD, &sa, null);
+    posix.sigaction(posix.SIG.CHLD, &sa, null);
 }
 
 /// Reap all exited child processes

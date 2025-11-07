@@ -123,7 +123,7 @@ fn runInitSystem(allocator: std.mem.Allocator, config_path: []const u8) !void {
     // Set up signal handling
     std.debug.print("[init] Setting up signal handlers...\n", .{});
     setupSignalHandlers();
-    try reaper.setupReaper();
+    reaper.setupReaper();
     std.debug.print("[init] Signal handlers ready\n\n", .{});
 
     // Start all services

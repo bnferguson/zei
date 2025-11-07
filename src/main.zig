@@ -222,7 +222,7 @@ fn mainEventLoop(allocator: std.mem.Allocator, manager: *ServiceManager) !void {
 }
 
 fn handleReaping(allocator: std.mem.Allocator, manager: *ServiceManager) !void {
-    var result = try reaper.reapProcesses(allocator, manager);
+    const result = try reaper.reapProcesses(allocator, manager);
     defer reaper.freeReapResult(allocator, result);
 
     // Restart services that need it
@@ -290,7 +290,7 @@ fn shutdownAllServices(manager: *ServiceManager) !void {
         }
 
         // Reap any exited processes
-        var result = try reaper.reapProcesses(allocator, manager);
+        const result = try reaper.reapProcesses(allocator, manager);
         reaper.freeReapResult(allocator, result);
 
         std.time.sleep(100 * std.time.ns_per_ms);

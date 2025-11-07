@@ -312,7 +312,7 @@ test "spawnProcess - simple echo" {
     };
 
     // Spawn the process
-    var result = try spawnProcess(allocator, &service_config);
+    const result = try spawnProcess(allocator, &service_config);
     defer {
         posix.close(result.pipes.stdout_read);
         posix.close(result.pipes.stderr_read);
@@ -357,7 +357,7 @@ test "spawnProcess - with working directory" {
         .restart = .always,
     };
 
-    var result = try spawnProcess(allocator, &service_config);
+    const result = try spawnProcess(allocator, &service_config);
     defer {
         posix.close(result.pipes.stdout_read);
         posix.close(result.pipes.stderr_read);
@@ -406,7 +406,7 @@ test "spawnProcess - with environment variables" {
         .restart = .always,
     };
 
-    var result = try spawnProcess(allocator, &service_config);
+    const result = try spawnProcess(allocator, &service_config);
     defer {
         posix.close(result.pipes.stdout_read);
         posix.close(result.pipes.stderr_read);

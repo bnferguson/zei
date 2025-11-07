@@ -116,7 +116,7 @@ pub fn reapProcesses(
                 reaped.signal,
             ) catch |err| {
                 std.debug.print("Error handling service exit for PID {d}: {}\n", .{ pid, err });
-                false
+                false;
             };
 
             if (should_restart) {
@@ -208,7 +208,7 @@ test "reapProcesses - no children" {
     var manager = ServiceManager.init(std.testing.allocator);
     defer manager.deinit();
 
-    var result = try reapProcesses(std.testing.allocator, &manager);
+    const result = try reapProcesses(std.testing.allocator, &manager);
     defer freeReapResult(std.testing.allocator, result);
 
     // Should have reaped 0 processes (no children running)
@@ -256,7 +256,7 @@ test "reapProcesses - with child process" {
     std.time.sleep(100 * std.time.ns_per_ms);
 
     // Reap processes
-    var result = try reapProcesses(allocator, &manager);
+    const result = try reapProcesses(allocator, &manager);
     defer freeReapResult(allocator, result);
 
     // Should have reaped 1 process
@@ -286,7 +286,7 @@ test "reapProcesses - orphaned process" {
     std.time.sleep(100 * std.time.ns_per_ms);
 
     // Reap processes
-    var result = try reapProcesses(allocator, &manager);
+    const result = try reapProcesses(allocator, &manager);
     defer freeReapResult(allocator, result);
 
     // Should have reaped the orphan

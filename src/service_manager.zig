@@ -136,11 +136,11 @@ pub const ServiceManager = struct {
 
     /// Get count of services in a specific state
     pub fn countByState(self: *ServiceManager, state: ServiceState) usize {
-        var count: usize = 0;
+        var stateCount: usize = 0;
         var it = self.services.iterator();
         while (it.next()) |entry| {
             if (entry.value_ptr.info.state == state) {
-                count += 1;
+                stateCount += 1;
             }
         }
         return count;

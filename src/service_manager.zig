@@ -108,7 +108,7 @@ pub const ServiceManager = struct {
     /// Get all running services
     pub fn getAllRunningServices(self: *ServiceManager, allocator: std.mem.Allocator) ![]const *Service {
         var running_list = std.ArrayList(*Service).init(allocator);
-        errdefer running_list.deinit();
+        errdefer running_list.deinit(allocator);
 
         var it = self.services.iterator();
         while (it.next()) |entry| {
@@ -124,7 +124,7 @@ pub const ServiceManager = struct {
     /// Get all services regardless of state
     pub fn getAllServices(self: *ServiceManager, allocator: std.mem.Allocator) ![]const *Service {
         var service_list = std.ArrayList(*Service).init(allocator);
-        errdefer service_list.deinit();
+        errdefer service_list.deinit(allocator);
 
         var it = self.services.iterator();
         while (it.next()) |entry| {

@@ -64,14 +64,14 @@ pub fn reapProcesses(
     manager: *ServiceManager,
 ) !ReapResult {
     var reaped_list = std.ArrayList(ReapedProcess).init(allocator);
-    errdefer reaped_list.deinit();
+    errdefer reaped_list.deinit(allocator);
 
     var restarts_needed = std.ArrayList([]const u8).init(allocator);
     errdefer {
         for (restarts_needed.items) |name| {
             allocator.free(name);
         }
-        restarts_needed.deinit();
+        restarts_needed.deinit(allocator);
     }
 
     // Reap all available child processes in a loop
@@ -163,7 +163,7 @@ pub fn freeReapResult(allocator: std.mem.Allocator, result: ReapResult) void {
     for (result.restarts_needed.items) |name| {
         allocator.free(name);
     }
-    result.restarts_needed.deinit();
+    result.restarts_needed.deinit(allocator);
 }
 
 // Tests

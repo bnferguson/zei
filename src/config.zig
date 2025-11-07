@@ -115,7 +115,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, yaml_content: []const u8) !Conf
         for (services.items) |*service| {
             service.deinit(allocator);
         }
-        services.deinit();
+        services.deinit(allocator);
     }
 
     // Parse each service
@@ -235,7 +235,7 @@ fn parseCommand(allocator: std.mem.Allocator, command_node: anytype) ![][]const 
         var args = std.ArrayList([]const u8).init(allocator);
         errdefer {
             for (args.items) |arg| allocator.free(arg);
-            args.deinit();
+            args.deinit(allocator);
         }
 
         var it = std.mem.tokenizeAny(u8, command_node.string, " \t\n");
@@ -259,7 +259,7 @@ fn parseCommand(allocator: std.mem.Allocator, command_node: anytype) ![][]const 
         var args = try std.ArrayList([]const u8).initCapacity(allocator, cmd_list.items.len);
         errdefer {
             for (args.items) |arg| allocator.free(arg);
-            args.deinit();
+            args.deinit(allocator);
         }
 
         for (cmd_list.items) |item| {

@@ -203,7 +203,7 @@ fn prepareEnvironment(
 ) ![:null]?[*:0]u8 {
     // Start with current environment
     var env_list = std.ArrayList([*:0]u8).init(allocator);
-    defer env_list.deinit();
+    defer env_list.deinit(allocator);
 
     // Copy existing environment
     var env_iter = std.process.getEnvMap(allocator) catch |err| {

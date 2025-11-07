@@ -71,12 +71,10 @@ pub fn freeCommand(allocator: std.mem.Allocator, argv: [:null]?[*:0]u8) void {
 /// Create pipes for stdout and stderr
 pub fn createPipes() !ProcessPipes {
     // Create stdout pipe
-    var stdout_fds: [2]posix.fd_t = undefined;
-    try posix.pipe(&stdout_fds);
+    const stdout_fds = try posix.pipe();
 
     // Create stderr pipe
-    var stderr_fds: [2]posix.fd_t = undefined;
-    try posix.pipe(&stderr_fds);
+    const stderr_fds = try posix.pipe();
 
     return ProcessPipes{
         .stdout_read = stdout_fds[0],

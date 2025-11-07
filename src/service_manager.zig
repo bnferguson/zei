@@ -10,14 +10,14 @@ const ServiceInfo = service_mod.ServiceInfo;
 pub const ServiceManager = struct {
     allocator: std.mem.Allocator,
     services: std.StringHashMap(Service),
-    pid_to_name: std.AutoHashMap(std.os.pid_t, []const u8),
+    pid_to_name: std.AutoHashMap(std.posix.pid_t, []const u8),
 
     /// Initialize a new service manager
     pub fn init(allocator: std.mem.Allocator) ServiceManager {
         return ServiceManager{
             .allocator = allocator,
             .services = std.StringHashMap(Service).init(allocator),
-            .pid_to_name = std.AutoHashMap(std.os.pid_t, []const u8).init(allocator),
+            .pid_to_name = std.AutoHashMap(std.posix.pid_t, []const u8).init(allocator),
         };
     }
 
@@ -44,7 +44,7 @@ pub const ServiceManager = struct {
     }
 
     /// Get service by PID
-    pub fn getServiceByPid(self: *ServiceManager, pid: std.os.pid_t) ?*Service {
+    pub fn getServiceByPid(self: *ServiceManager, pid: std.posix.pid_t) ?*Service {
         const name = self.pid_to_name.get(pid) orelse return null;
         return self.services.getPtr(name);
     }
@@ -56,13 +56,13 @@ pub const ServiceManager = struct {
     }
 
     /// Update service state by PID
-    pub fn updateStateByPid(self: *ServiceManager, pid: std.os.pid_t, new_state: ServiceState) !void {
+    pub fn updateStateByPid(self: *ServiceManager, pid: std.posix.pid_t, new_state: ServiceState) !void {
         const service = self.getServiceByPid(pid) orelse return error.ServiceNotFound;
         service.info.state = new_state;
     }
 
     /// Mark service as started with given PID
-    pub fn markStarted(self: *ServiceManager, name: []const u8, pid: std.os.pid_t) !void {
+    pub fn markStarted(self: *ServiceManager, name: []const u8, pid: std.posix.pid_t) !void {
         const service = self.services.getPtr(name) orelse return error.ServiceNotFound;
         service.info.markStarted(pid);
 
@@ -71,7 +71,7 @@ pub const ServiceManager = struct {
     }
 
     /// Mark service as exited
-    pub fn markExited(self: *ServiceManager, pid: std.os.pid_t, exit_code: i32) !void {
+    pub fn markExited(self: *ServiceManager, pid: std.posix.pid_t, exit_code: i32) !void {
         const service = self.getServiceByPid(pid) orelse return error.ServiceNotFound;
         service.info.markExited(exit_code);
 
@@ -80,7 +80,7 @@ pub const ServiceManager = struct {
     }
 
     /// Mark service as signaled (killed by signal)
-    pub fn markSignaled(self: *ServiceManager, pid: std.os.pid_t, signal: u8) !void {
+    pub fn markSignaled(self: *ServiceManager, pid: std.posix.pid_t, signal: u8) !void {
         const service = self.getServiceByPid(pid) orelse return error.ServiceNotFound;
         service.info.markSignaled(signal);
 
@@ -157,7 +157,7 @@ pub const ServiceManager = struct {
     }
 
     /// Check if a PID is tracked
-    pub fn hasPid(self: *ServiceManager, pid: std.os.pid_t) bool {
+    pub fn hasPid(self: *ServiceManager, pid: std.posix.pid_t) bool {
         return self.pid_to_name.contains(pid);
     }
 };
@@ -255,7 +255,7 @@ test "ServiceManager mark started and get by PID" {
     const service = manager.getServiceByPid(1234);
     try std.testing.expect(service != null);
     try std.testing.expectEqualStrings("test-service", service.?.config.name);
-    try std.testing.expectEqual(@as(std.os.pid_t, 1234), service.?.info.pid);
+    try std.testing.expectEqual(@as(std.posix.pid_t, 1234), service.?.info.pid);
     try std.testing.expectEqual(ServiceState.running, service.?.info.state);
 }
 

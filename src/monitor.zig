@@ -27,7 +27,7 @@ pub fn shouldRestart(policy: RestartPolicy, exit_code: ?i32) bool {
 /// Handle a service exit event
 pub fn handleServiceExit(
     manager: *ServiceManager,
-    pid: std.os.pid_t,
+    pid: std.posix.pid_t,
     exit_code: ?i32,
     signal: ?u8,
 ) !bool {
@@ -96,7 +96,7 @@ pub fn logLifecycleEvent(service_name: []const u8, event: LifecycleEvent) void {
 /// Lifecycle events for logging
 pub const LifecycleEvent = union(enum) {
     starting: void,
-    started: std.os.pid_t,
+    started: std.posix.pid_t,
     stopping: void,
     stopped: void,
     restarting: u32,

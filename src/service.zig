@@ -25,7 +25,7 @@ pub const ServiceState = enum {
 /// Runtime information about a service
 pub const ServiceInfo = struct {
     /// Process ID (0 if not running)
-    pid: std.os.pid_t,
+    pid: std.posix.pid_t,
 
     /// Current state
     state: ServiceState,
@@ -54,7 +54,7 @@ pub const ServiceInfo = struct {
     }
 
     /// Mark service as started with given PID
-    pub fn markStarted(self: *ServiceInfo, pid: std.os.pid_t) void {
+    pub fn markStarted(self: *ServiceInfo, pid: std.posix.pid_t) void {
         self.pid = pid;
         self.state = .running;
         self.start_time = std.time.timestamp();
@@ -132,7 +132,7 @@ test "ServiceState.toString" {
 
 test "ServiceInfo initialization" {
     var info = ServiceInfo.init();
-    try std.testing.expectEqual(@as(std.os.pid_t, 0), info.pid);
+    try std.testing.expectEqual(@as(std.posix.pid_t, 0), info.pid);
     try std.testing.expectEqual(ServiceState.stopped, info.state);
     try std.testing.expectEqual(@as(i64, 0), info.start_time);
     try std.testing.expectEqual(@as(u32, 0), info.restart_count);
@@ -146,7 +146,7 @@ test "ServiceInfo mark started" {
 
     info.markStarted(1234);
 
-    try std.testing.expectEqual(@as(std.os.pid_t, 1234), info.pid);
+    try std.testing.expectEqual(@as(std.posix.pid_t, 1234), info.pid);
     try std.testing.expectEqual(ServiceState.running, info.state);
     try std.testing.expect(info.start_time > 0);
     try std.testing.expect(info.exit_code == null);
@@ -159,7 +159,7 @@ test "ServiceInfo mark exited" {
 
     info.markExited(42);
 
-    try std.testing.expectEqual(@as(std.os.pid_t, 0), info.pid);
+    try std.testing.expectEqual(@as(std.posix.pid_t, 0), info.pid);
     try std.testing.expectEqual(ServiceState.exited, info.state);
     try std.testing.expectEqual(@as(i32, 42), info.exit_code.?);
     try std.testing.expect(info.exit_signal == null);
@@ -172,7 +172,7 @@ test "ServiceInfo mark signaled" {
 
     info.markSignaled(9); // SIGKILL
 
-    try std.testing.expectEqual(@as(std.os.pid_t, 0), info.pid);
+    try std.testing.expectEqual(@as(std.posix.pid_t, 0), info.pid);
     try std.testing.expectEqual(ServiceState.exited, info.state);
     try std.testing.expect(info.exit_code == null);
     try std.testing.expectEqual(@as(u8, 9), info.exit_signal.?);

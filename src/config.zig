@@ -110,7 +110,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, yaml_content: []const u8) !Conf
     }
 
     const services_list = services_node.list;
-    var services = try std.ArrayList(ServiceConfig).initCapacity(allocator, services_list.items.len);
+    var services = try std.ArrayList(ServiceConfig).initCapacity(allocator, services_list.len);
     errdefer {
         for (services.items) |*service| {
             service.deinit(allocator);
@@ -119,7 +119,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, yaml_content: []const u8) !Conf
     }
 
     // Parse each service
-    for (services_list.items) |service_node| {
+    for (services_list) |service_node| {
         if (service_node != .map) {
             return error.ServiceNotMapping;
         }

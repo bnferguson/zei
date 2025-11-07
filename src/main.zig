@@ -122,7 +122,7 @@ fn runInitSystem(allocator: std.mem.Allocator, config_path: []const u8) !void {
 
     // Set up signal handling
     std.debug.print("[init] Setting up signal handlers...\n", .{});
-    try setupSignalHandlers();
+    setupSignalHandlers();
     try reaper.setupReaper();
     std.debug.print("[init] Signal handlers ready\n\n", .{});
 
@@ -178,14 +178,14 @@ fn startService(allocator: std.mem.Allocator, manager: *ServiceManager, service_
     posix.close(result.pipes.stderr_read);
 }
 
-fn setupSignalHandlers() !void {
+fn setupSignalHandlers() void {
     // Block SIGTERM and SIGINT so we can handle them in the event loop
     var mask = posix.sigemptyset();
     posix.sigaddset(&mask, posix.SIG.TERM);
     posix.sigaddset(&mask, posix.SIG.INT);
     posix.sigaddset(&mask, posix.SIG.CHLD);
 
-    try posix.sigprocmask(posix.SIG.BLOCK, &mask, null);
+    posix.sigprocmask(posix.SIG.BLOCK, &mask, null);
 }
 
 fn mainEventLoop(allocator: std.mem.Allocator, manager: *ServiceManager) !void {

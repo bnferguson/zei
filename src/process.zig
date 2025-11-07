@@ -236,7 +236,7 @@ fn prepareEnvironment(
     }
 
     // Convert to null-terminated array
-    const env_slice = try env_list.toOwnedSlice();
+    const env_slice = try env_list.toOwnedSlice(allocator);
     var envp = try allocator.alloc(?[*:0]u8, env_slice.len + 1);
 
     for (env_slice, 0..) |env_str, i| {

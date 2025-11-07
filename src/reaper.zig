@@ -135,7 +135,7 @@ pub fn reapProcesses(
     }
 
     return ReapResult{
-        .processes = try reaped_list.toOwnedSlice(),
+        .processes = try reaped_list.toOwnedSlice(allocator),
         .restarts_needed = restarts_needed,
     };
 }

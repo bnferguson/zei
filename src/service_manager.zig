@@ -118,7 +118,7 @@ pub const ServiceManager = struct {
             }
         }
 
-        return running_list.toOwnedSlice();
+        return running_list.toOwnedSlice(allocator);
     }
 
     /// Get all services regardless of state
@@ -131,7 +131,7 @@ pub const ServiceManager = struct {
             try service_list.append(allocator, entry.value_ptr);
         }
 
-        return service_list.toOwnedSlice();
+        return service_list.toOwnedSlice(allocator);
     }
 
     /// Get count of services in a specific state

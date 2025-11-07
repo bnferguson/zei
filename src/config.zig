@@ -224,7 +224,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, yaml_content: []const u8) !Conf
     }
 
     return Config{
-        .services = try services.toOwnedSlice(),
+        .services = try services.toOwnedSlice(allocator),
         .allocator = allocator,
     };
 }
@@ -249,7 +249,7 @@ fn parseCommand(allocator: std.mem.Allocator, command_node: anytype) ![][]const 
             return error.EmptyCommand;
         }
 
-        return args.toOwnedSlice();
+        return args.toOwnedSlice(allocator);
     } else if (command_node == .list) {
         // Command is an array
         const cmd_list = command_node.list;
@@ -272,7 +272,7 @@ fn parseCommand(allocator: std.mem.Allocator, command_node: anytype) ![][]const 
             try args.append(allocator, arg);
         }
 
-        return args.toOwnedSlice();
+        return args.toOwnedSlice(allocator);
     } else {
         return error.CommandInvalidType;
     }

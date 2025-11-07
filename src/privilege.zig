@@ -1,6 +1,7 @@
 const std = @import("std");
 const os = std.os;
 const linux = std.os.linux;
+const posix = std.posix;
 
 /// Error types for privilege operations
 pub const PrivilegeError = error{

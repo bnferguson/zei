@@ -50,7 +50,7 @@ pub fn setupReaper() !void {
     // For now, just ensure SIGCHLD isn't ignored
     var sa = posix.Sigaction{
         .handler = .{ .handler = posix.SIG.DFL },
-        .mask = posix.empty_sigset,
+        .mask = posix.sigemptyset(),
         .flags = posix.SA.NOCLDSTOP | posix.SA.RESTART,
     };
 

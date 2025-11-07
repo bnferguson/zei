@@ -180,7 +180,7 @@ fn startService(allocator: std.mem.Allocator, manager: *ServiceManager, service_
 
 fn setupSignalHandlers() !void {
     // Block SIGTERM and SIGINT so we can handle them in the event loop
-    var mask = posix.empty_sigset;
+    var mask = posix.sigemptyset();
     linux.sigaddset(&mask, @intFromEnum(posix.SIG.TERM));
     linux.sigaddset(&mask, @intFromEnum(posix.SIG.INT));
     linux.sigaddset(&mask, @intFromEnum(posix.SIG.CHLD));
@@ -189,7 +189,7 @@ fn setupSignalHandlers() !void {
 }
 
 fn mainEventLoop(allocator: std.mem.Allocator, manager: *ServiceManager) !void {
-    var mask = posix.empty_sigset;
+    var mask = posix.sigemptyset();
     linux.sigaddset(&mask, @intFromEnum(posix.SIG.TERM));
     linux.sigaddset(&mask, @intFromEnum(posix.SIG.INT));
     linux.sigaddset(&mask, @intFromEnum(posix.SIG.CHLD));

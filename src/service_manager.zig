@@ -107,14 +107,14 @@ pub const ServiceManager = struct {
 
     /// Get all running services
     pub fn getAllRunningServices(self: *ServiceManager, allocator: std.mem.Allocator) ![]const *Service {
-        var running_list = std.ArrayList(*Service).init(allocator);
+        var running_list: std.ArrayList(*Service) = .empty;
         errdefer running_list.deinit(allocator);
 
         var it = self.services.iterator();
         while (it.next()) |entry| {
             const service = entry.value_ptr;
             if (service.info.isRunning()) {
-                try running_list.append(service);
+                try running_list.append(allocator, service);
             }
         }
 
@@ -123,12 +123,12 @@ pub const ServiceManager = struct {
 
     /// Get all services regardless of state
     pub fn getAllServices(self: *ServiceManager, allocator: std.mem.Allocator) ![]const *Service {
-        var service_list = std.ArrayList(*Service).init(allocator);
+        var service_list: std.ArrayList(*Service) = .empty;
         errdefer service_list.deinit(allocator);
 
         var it = self.services.iterator();
         while (it.next()) |entry| {
-            try service_list.append(entry.value_ptr);
+            try service_list.append(allocator, entry.value_ptr);
         }
 
         return service_list.toOwnedSlice();

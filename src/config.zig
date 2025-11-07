@@ -110,7 +110,8 @@ pub fn parseConfig(allocator: std.mem.Allocator, yaml_content: []const u8) !Conf
     }
 
     const services_list = services_node.list;
-    var services = try std.ArrayList(ServiceConfig).initCapacity(allocator, services_list.len);
+    var services: std.ArrayList(ServiceConfig) = .empty;
+    try services.ensureTotalCapacity(allocator, services_list.len);
     errdefer {
         for (services.items) |*service| {
             service.deinit(allocator);
@@ -219,7 +220,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, yaml_content: []const u8) !Conf
             .restart = restart,
         };
 
-        try services.append(service_config);
+        try services.append(allocator, service_config);
     }
 
     return Config{
@@ -232,7 +233,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, yaml_content: []const u8) !Conf
 fn parseCommand(allocator: std.mem.Allocator, command_node: anytype) ![][]const u8 {
     if (command_node == .scalar) {
         // Command is a string - split on whitespace
-        var args = std.ArrayList([]const u8).init(allocator);
+        var args: std.ArrayList([]const u8) = .empty;
         errdefer {
             for (args.items) |arg| allocator.free(arg);
             args.deinit(allocator);
@@ -241,7 +242,7 @@ fn parseCommand(allocator: std.mem.Allocator, command_node: anytype) ![][]const 
         var it = std.mem.tokenizeAny(u8, command_node.scalar, " \t\n");
         while (it.next()) |token| {
             const arg = try allocator.dupe(u8, token);
-            try args.append(arg);
+            try args.append(allocator, arg);
         }
 
         if (args.items.len == 0) {
@@ -256,7 +257,8 @@ fn parseCommand(allocator: std.mem.Allocator, command_node: anytype) ![][]const 
             return error.EmptyCommand;
         }
 
-        var args = try std.ArrayList([]const u8).initCapacity(allocator, cmd_list.items.len);
+        var args: std.ArrayList([]const u8) = .empty;
+        try args.ensureTotalCapacity(allocator, cmd_list.items.len);
         errdefer {
             for (args.items) |arg| allocator.free(arg);
             args.deinit(allocator);
@@ -267,7 +269,7 @@ fn parseCommand(allocator: std.mem.Allocator, command_node: anytype) ![][]const 
                 return error.CommandArrayNotStrings;
             }
             const arg = try allocator.dupe(u8, item.scalar);
-            try args.append(arg);
+            try args.append(allocator, arg);
         }
 
         return args.toOwnedSlice();

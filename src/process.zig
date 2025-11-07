@@ -202,7 +202,7 @@ fn prepareEnvironment(
     service_env: ?std.StringHashMap([]const u8),
 ) ![:null]?[*:0]u8 {
     // Start with current environment
-    var env_list = std.ArrayList([*:0]u8).init(allocator);
+    var env_list: std.ArrayList([*:0]u8) = .empty;
     defer env_list.deinit(allocator);
 
     // Copy existing environment
@@ -219,7 +219,7 @@ fn prepareEnvironment(
             "{s}={s}",
             .{ entry.key_ptr.*, entry.value_ptr.* },
         );
-        try env_list.append(env_str);
+        try env_list.append(allocator, env_str);
     }
 
     // Add/override service-specific environment variables
@@ -231,7 +231,7 @@ fn prepareEnvironment(
                 "{s}={s}",
                 .{ entry.key_ptr.*, entry.value_ptr.* },
             );
-            try env_list.append(env_str);
+            try env_list.append(allocator, env_str);
         }
     }
 

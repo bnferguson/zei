@@ -63,10 +63,10 @@ pub fn reapProcesses(
     allocator: std.mem.Allocator,
     manager: *ServiceManager,
 ) !ReapResult {
-    var reaped_list = std.ArrayList(ReapedProcess).init(allocator);
+    var reaped_list: std.ArrayList(ReapedProcess) = .empty;
     errdefer reaped_list.deinit(allocator);
 
-    var restarts_needed = std.ArrayList([]const u8).init(allocator);
+    var restarts_needed: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (restarts_needed.items) |name| {
             allocator.free(name);
@@ -123,7 +123,7 @@ pub fn reapProcesses(
                 // Get the service name before we lose the reference
                 const service = manager.getServiceByName(getServiceNameByPid(manager, pid) orelse "") orelse continue;
                 const name = try allocator.dupe(u8, service.config.name);
-                try restarts_needed.append(name);
+                try restarts_needed.append(allocator, name);
             }
         } else {
             // Orphaned process or unknown
@@ -131,7 +131,7 @@ pub fn reapProcesses(
             logOrphanedProcess(reaped);
         }
 
-        try reaped_list.append(reaped);
+        try reaped_list.append(allocator, reaped);
     }
 
     return ReapResult{

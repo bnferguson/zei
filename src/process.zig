@@ -212,8 +212,9 @@ fn prepareEnvironment(
 
     var it = env_iter.iterator();
     while (it.next()) |entry| {
-        const env_str = try std.fmt.allocPrintZ(
+        const env_str = try std.fmt.allocPrintSentinel(
             allocator,
+            0,
             "{s}={s}",
             .{ entry.key_ptr.*, entry.value_ptr.* },
         );
@@ -224,8 +225,9 @@ fn prepareEnvironment(
     if (service_env) |env_map| {
         var service_it = env_map.iterator();
         while (service_it.next()) |entry| {
-            const env_str = try std.fmt.allocPrintZ(
+            const env_str = try std.fmt.allocPrintSentinel(
                 allocator,
+                0,
                 "{s}={s}",
                 .{ entry.key_ptr.*, entry.value_ptr.* },
             );

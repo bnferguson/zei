@@ -220,6 +220,56 @@ pub fn switchToUser(target_uid: linux.uid_t, target_gid: ?linux.gid_t) !void {
     }
 }
 
+/// Drop privileges to a specific user temporarily (can be re-escalated)
+/// Uses seteuid/setegid instead of setuid/setgid to allow re-escalation
+/// This is for the main process that needs to run as non-root but escalate when needed
+pub fn dropPrivilegesTemporarily(target_uid: linux.uid_t, target_gid: linux.gid_t) !void {
+    // Verify we're running as root
+    if (getCurrentEuid() != 0) {
+        std.debug.print("Cannot drop privileges: not running as root (EUID={d})\n", .{getCurrentEuid()});
+        return PrivilegeError.PermissionDenied;
+    }
+
+    // Set effective GID first
+    const gid_result = linux.setegid(target_gid);
+    if (gid_result != 0) {
+        const err = posix.errno(gid_result);
+        std.debug.print("Failed to setegid({d}): errno={}\n", .{ target_gid, err });
+        return PrivilegeError.PermissionDenied;
+    }
+
+    // Verify EGID was set
+    if (getCurrentEgid() != target_gid) {
+        std.debug.print("setegid verification failed: expected {d}, got {d}\n", .{ target_gid, getCurrentEgid() });
+        return PrivilegeError.PrivilegeLeakDetected;
+    }
+
+    // Now set effective UID
+    const uid_result = linux.seteuid(target_uid);
+    if (uid_result != 0) {
+        const err = posix.errno(uid_result);
+        std.debug.print("Failed to seteuid({d}): errno={}\n", .{ target_uid, err });
+        return PrivilegeError.PermissionDenied;
+    }
+
+    // Verify EUID was set
+    if (getCurrentEuid() != target_uid) {
+        std.debug.print("seteuid verification failed: expected {d}, got {d}\n", .{ target_uid, getCurrentEuid() });
+        return PrivilegeError.PrivilegeLeakDetected;
+    }
+
+    // Verify we can still escalate back (real UID should still be root)
+    if (getCurrentUid() != 0) {
+        std.debug.print("Warning: Real UID is not 0, may not be able to re-escalate\n", .{});
+    }
+
+    std.debug.print("[privilege] Dropped to UID={d}, GID={d} (real UID={d} allows re-escalation)\n", .{
+        getCurrentEuid(),
+        getCurrentEgid(),
+        getCurrentUid(),
+    });
+}
+
 /// Drop privileges back to original user/group
 /// Note: This only works if we haven't called setuid() yet, only seteuid()
 /// Once setuid() is called, privileges cannot be regained

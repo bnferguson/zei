@@ -131,6 +131,34 @@ fn runInitSystem(allocator: std.mem.Allocator, config_path: []const u8) !void {
     try startAllServices(allocator, &manager);
     std.debug.print("[init] All services started\n\n", .{});
 
+    // Drop privileges for main process (but keep ability to re-escalate)
+    // Try to drop to "zei" user, fallback to "nobody" if not found
+    if (privilege.getCurrentEuid() == 0) {
+        std.debug.print("[init] Dropping privileges for main process...\n", .{});
+
+        const target_user = "zei";
+        const fallback_user = "nobody";
+
+        const drop_uid = privilege.lookupUser(allocator, target_user) catch |err| blk: {
+            std.debug.print("[init] User '{s}' not found ({any}), trying '{s}'...\n", .{ target_user, err, fallback_user });
+            break :blk privilege.lookupUser(allocator, fallback_user) catch |fallback_err| {
+                std.debug.print("[init] Warning: Could not drop privileges - user '{s}' not found: {any}\n", .{ fallback_user, fallback_err });
+                break :blk null;
+            };
+        };
+
+        if (drop_uid) |uid| {
+            // Try to get matching group, or use same GID as UID
+            const drop_gid = privilege.lookupGroup(allocator, target_user) catch uid;
+
+            privilege.dropPrivilegesTemporarily(uid, drop_gid) catch |err| {
+                std.debug.print("[init] Warning: Failed to drop privileges: {any}\n", .{err});
+            };
+        }
+    } else {
+        std.debug.print("[init] Not running as root, skipping privilege drop\n", .{});
+    }
+
     // Enter main event loop
     std.debug.print("[init] Entering main event loop\n", .{});
     std.debug.print("[init] Press Ctrl+C to initiate shutdown\n\n", .{});

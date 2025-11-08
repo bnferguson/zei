@@ -27,6 +27,10 @@ RUN ARCH=$(uname -m) && \
 # Verify Zig installation
 RUN zig version
 
+# Create non-root user for running zei main process
+# The main process will drop to this user after initialization
+RUN groupadd -r zei && useradd -r -g zei zei
+
 # Set working directory
 WORKDIR /zei
 

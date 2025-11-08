@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Zig 0.13.0 or later (0.14+ recommended)
+- Zig 0.15.2
 
 Install Zig from: https://ziglang.org/download/
 
@@ -17,7 +17,7 @@ The project uses `kubkon/zig-yaml` for YAML parsing. To fetch it:
 zig build
 
 # Option 2: Manually fetch and update build.zig.zon
-zig fetch --save=yaml https://github.com/kubkon/zig-yaml/archive/refs/tags/0.1.1.tar.gz
+zig fetch --save=yaml https://github.com/kubkon/zig-yaml/archive/refs/heads/main.zip
 ```
 
 **Note:** On first build, if the hash in `build.zig.zon` is incorrect, Zig will tell you the correct hash. Update the `.hash` field in `build.zig.zon` with the provided value.

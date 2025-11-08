@@ -90,6 +90,7 @@ pub fn parseConfigFile(allocator: std.mem.Allocator, file_path: []const u8) !Con
 pub fn parseConfig(allocator: std.mem.Allocator, yaml_content: []const u8) !Config {
     var yaml: Yaml = .{ .source = yaml_content };
     try yaml.load(allocator);
+    defer yaml.deinit(allocator);
 
     if (yaml.docs.items.len == 0) {
         return error.EmptyConfiguration;

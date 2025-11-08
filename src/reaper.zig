@@ -112,6 +112,12 @@ pub fn reapProcesses(
             // This is one of our managed services
             std.debug.print("Reaped managed process PID {d}\n", .{pid_i32});
 
+            // Get the service name BEFORE handleServiceExit removes the PID mapping
+            const service_name = getServiceNameByPid(manager, pid_i32) orelse {
+                std.debug.print("Warning: Could not find service name for PID {d}\n", .{pid_i32});
+                continue;
+            };
+
             // Handle the exit and check if restart is needed
             const should_restart = monitor.handleServiceExit(
                 manager,
@@ -124,9 +130,8 @@ pub fn reapProcesses(
             };
 
             if (should_restart) {
-                // Get the service name before we lose the reference
-                const service = manager.getServiceByName(getServiceNameByPid(manager, pid_i32) orelse "") orelse continue;
-                const name = try allocator.dupe(u8, service.config.name);
+                // Duplicate the service name for restart tracking
+                const name = try allocator.dupe(u8, service_name);
                 try restarts_needed.append(allocator, name);
             }
         } else {
@@ -230,11 +235,9 @@ test "reapProcesses - with child process" {
     const cmd = try allocator.alloc([]const u8, 2);
     cmd[0] = try allocator.dupe(u8, "/bin/sh");
     cmd[1] = try allocator.dupe(u8, "-c");
-    defer allocator.free(cmd[0]);
-    defer allocator.free(cmd[1]);
 
     const config_mod = @import("config.zig");
-    const service_config = config_mod.ServiceConfig{
+    var service_config = config_mod.ServiceConfig{
         .name = name,
         .command = cmd,
         .user = null,
@@ -243,6 +246,7 @@ test "reapProcesses - with child process" {
         .env = null,
         .restart = .always,
     };
+    defer service_config.deinit(allocator);
 
     try manager.registerService(service_config);
 

@@ -35,4 +35,19 @@ pub fn build(b: *std.Build) void {
 
     const run_step = b.step("run", "Run zei");
     run_step.dependOn(&run_cmd.step);
+
+    // Test step
+    const tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    tests.root_module.addImport("yaml", yaml.module("yaml"));
+    tests.linkLibC();
+
+    const run_tests = b.addRunArtifact(tests);
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_tests.step);
 }

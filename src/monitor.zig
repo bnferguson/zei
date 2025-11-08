@@ -142,7 +142,7 @@ test "handleServiceExit - exit with code 0, always restart" {
     const cmd = try allocator.alloc([]const u8, 1);
     cmd[0] = try allocator.dupe(u8, "/bin/echo");
 
-    const service_config = config.ServiceConfig{
+    var service_config = config.ServiceConfig{
         .name = name,
         .command = cmd,
         .user = null,
@@ -151,6 +151,7 @@ test "handleServiceExit - exit with code 0, always restart" {
         .env = null,
         .restart = .always,
     };
+    defer service_config.deinit(allocator);
 
     try manager.registerService(service_config);
     try manager.markStarted("test-service", 1234);
@@ -176,7 +177,7 @@ test "handleServiceExit - exit with code 1, on_failure restart" {
     const cmd = try allocator.alloc([]const u8, 1);
     cmd[0] = try allocator.dupe(u8, "/bin/echo");
 
-    const service_config = config.ServiceConfig{
+    var service_config = config.ServiceConfig{
         .name = name,
         .command = cmd,
         .user = null,
@@ -185,6 +186,7 @@ test "handleServiceExit - exit with code 1, on_failure restart" {
         .env = null,
         .restart = .on_failure,
     };
+    defer service_config.deinit(allocator);
 
     try manager.registerService(service_config);
     try manager.markStarted("test-service", 1234);
@@ -209,7 +211,7 @@ test "handleServiceExit - exit with code 0, on_failure restart" {
     const cmd = try allocator.alloc([]const u8, 1);
     cmd[0] = try allocator.dupe(u8, "/bin/echo");
 
-    const service_config = config.ServiceConfig{
+    var service_config = config.ServiceConfig{
         .name = name,
         .command = cmd,
         .user = null,
@@ -218,6 +220,7 @@ test "handleServiceExit - exit with code 0, on_failure restart" {
         .env = null,
         .restart = .on_failure,
     };
+    defer service_config.deinit(allocator);
 
     try manager.registerService(service_config);
     try manager.markStarted("test-service", 1234);
@@ -242,7 +245,7 @@ test "handleServiceExit - exit with code 0, never restart" {
     const cmd = try allocator.alloc([]const u8, 1);
     cmd[0] = try allocator.dupe(u8, "/bin/echo");
 
-    const service_config = config.ServiceConfig{
+    var service_config = config.ServiceConfig{
         .name = name,
         .command = cmd,
         .user = null,
@@ -251,6 +254,7 @@ test "handleServiceExit - exit with code 0, never restart" {
         .env = null,
         .restart = .never,
     };
+    defer service_config.deinit(allocator);
 
     try manager.registerService(service_config);
     try manager.markStarted("test-service", 1234);
@@ -274,7 +278,7 @@ test "handleServiceExit - killed by signal, always restart" {
     const cmd = try allocator.alloc([]const u8, 1);
     cmd[0] = try allocator.dupe(u8, "/bin/echo");
 
-    const service_config = config.ServiceConfig{
+    var service_config = config.ServiceConfig{
         .name = name,
         .command = cmd,
         .user = null,
@@ -283,6 +287,7 @@ test "handleServiceExit - killed by signal, always restart" {
         .env = null,
         .restart = .always,
     };
+    defer service_config.deinit(allocator);
 
     try manager.registerService(service_config);
     try manager.markStarted("test-service", 1234);

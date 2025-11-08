@@ -23,11 +23,10 @@ pub const ServiceManager = struct {
 
     /// Clean up all resources
     pub fn deinit(self: *ServiceManager) void {
-        var it = self.services.iterator();
-        while (it.next()) |entry| {
-            var service = entry.value_ptr;
-            service.deinit(self.allocator);
-        }
+        // NOTE: We don't call service.deinit() because ServiceManager doesn't own
+        // the ServiceConfig memory - the Config struct owns it and will free it.
+        // Services are shallow copies of configs, so freeing them here would cause
+        // a double-free error.
         self.services.deinit();
         self.pid_to_name.deinit();
     }
@@ -181,7 +180,7 @@ test "ServiceManager register service" {
     const cmd = try allocator.alloc([]const u8, 1);
     cmd[0] = try allocator.dupe(u8, "/bin/echo");
 
-    const service_config = config.ServiceConfig{
+    var service_config = config.ServiceConfig{
         .name = name,
         .command = cmd,
         .user = null,
@@ -190,6 +189,7 @@ test "ServiceManager register service" {
         .env = null,
         .restart = .always,
     };
+    defer service_config.deinit(allocator);
 
     try manager.registerService(service_config);
 
@@ -207,7 +207,7 @@ test "ServiceManager get service by name" {
     const cmd = try allocator.alloc([]const u8, 1);
     cmd[0] = try allocator.dupe(u8, "/bin/echo");
 
-    const service_config = config.ServiceConfig{
+    var service_config = config.ServiceConfig{
         .name = name,
         .command = cmd,
         .user = null,
@@ -216,6 +216,7 @@ test "ServiceManager get service by name" {
         .env = null,
         .restart = .always,
     };
+    defer service_config.deinit(allocator);
 
     try manager.registerService(service_config);
 
@@ -234,7 +235,7 @@ test "ServiceManager mark started and get by PID" {
     const cmd = try allocator.alloc([]const u8, 1);
     cmd[0] = try allocator.dupe(u8, "/bin/echo");
 
-    const service_config = config.ServiceConfig{
+    var service_config = config.ServiceConfig{
         .name = name,
         .command = cmd,
         .user = null,
@@ -243,6 +244,7 @@ test "ServiceManager mark started and get by PID" {
         .env = null,
         .restart = .always,
     };
+    defer service_config.deinit(allocator);
 
     try manager.registerService(service_config);
 
@@ -269,7 +271,7 @@ test "ServiceManager mark exited" {
     const cmd = try allocator.alloc([]const u8, 1);
     cmd[0] = try allocator.dupe(u8, "/bin/echo");
 
-    const service_config = config.ServiceConfig{
+    var service_config = config.ServiceConfig{
         .name = name,
         .command = cmd,
         .user = null,
@@ -278,6 +280,7 @@ test "ServiceManager mark exited" {
         .env = null,
         .restart = .always,
     };
+    defer service_config.deinit(allocator);
 
     try manager.registerService(service_config);
     try manager.markStarted("test-service", 1234);
@@ -305,7 +308,7 @@ test "ServiceManager restart counting" {
     const cmd = try allocator.alloc([]const u8, 1);
     cmd[0] = try allocator.dupe(u8, "/bin/echo");
 
-    const service_config = config.ServiceConfig{
+    var service_config = config.ServiceConfig{
         .name = name,
         .command = cmd,
         .user = null,
@@ -314,6 +317,7 @@ test "ServiceManager restart counting" {
         .env = null,
         .restart = .always,
     };
+    defer service_config.deinit(allocator);
 
     try manager.registerService(service_config);
 
@@ -334,12 +338,13 @@ test "ServiceManager get all running services" {
     const allocator = std.testing.allocator;
 
     // Register multiple services
+    var configs: [3]config.ServiceConfig = undefined;
     for (0..3) |i| {
         const name = try std.fmt.allocPrint(allocator, "service-{d}", .{i});
         const cmd = try allocator.alloc([]const u8, 1);
         cmd[0] = try allocator.dupe(u8, "/bin/echo");
 
-        const service_config = config.ServiceConfig{
+        configs[i] = config.ServiceConfig{
             .name = name,
             .command = cmd,
             .user = null,
@@ -349,8 +354,9 @@ test "ServiceManager get all running services" {
             .restart = .always,
         };
 
-        try manager.registerService(service_config);
+        try manager.registerService(configs[i]);
     }
+    defer for (&configs) |*cfg| cfg.deinit(allocator);
 
     // Start some services
     try manager.markStarted("service-0", 1000);
@@ -370,12 +376,13 @@ test "ServiceManager count by state" {
     const allocator = std.testing.allocator;
 
     // Register services
+    var configs: [5]config.ServiceConfig = undefined;
     for (0..5) |i| {
         const name = try std.fmt.allocPrint(allocator, "service-{d}", .{i});
         const cmd = try allocator.alloc([]const u8, 1);
         cmd[0] = try allocator.dupe(u8, "/bin/echo");
 
-        const service_config = config.ServiceConfig{
+        configs[i] = config.ServiceConfig{
             .name = name,
             .command = cmd,
             .user = null,
@@ -385,8 +392,9 @@ test "ServiceManager count by state" {
             .restart = .always,
         };
 
-        try manager.registerService(service_config);
+        try manager.registerService(configs[i]);
     }
+    defer for (&configs) |*cfg| cfg.deinit(allocator);
 
     // Initially all stopped
     try std.testing.expectEqual(@as(usize, 5), manager.countByState(.stopped));

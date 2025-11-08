@@ -1,0 +1,21 @@
+# Test restart policies
+services:
+  # This service exits with 0 - should NOT restart with on-failure
+  - name: success-exit
+    command: /bin/sh -c "echo 'Exiting successfully'; exit 0"
+    restart: on-failure
+
+  # This service exits with error - SHOULD restart with on-failure
+  - name: failure-exit
+    command: /bin/sh -c "echo 'Exiting with error'; exit 1"
+    restart: on-failure
+
+  # This service always restarts
+  - name: always-restart
+    command: /bin/sh -c "echo 'Running and exiting'; sleep 1; exit 0"
+    restart: always
+
+  # This service never restarts
+  - name: never-restart
+    command: /bin/sh -c "echo 'Running once'; exit 0"
+    restart: never

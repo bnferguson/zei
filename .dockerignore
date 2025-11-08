@@ -1,0 +1,27 @@
+# Build artifacts
+zig-cache/
+zig-out/
+.zig-cache/
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+!README.md
+
+# Test artifacts
+test/*.log
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore

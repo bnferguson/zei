@@ -1,10 +1,24 @@
-# Complete Zig Port of PEI Init System + Zig 0.15.2 Compatibility
+# Initial Zig Port of PEI Init System (MVP) + Zig 0.15.2 Compatibility
 
 ## Overview
 
-This PR completes the port of the [pei](https://github.com/bnferguson/pei) init system from Go to Zig, creating a fully functional privilege-escalating init system written in Zig 0.15.2.
+This PR represents the **initial working port** of the [pei](https://github.com/bnferguson/pei) init system from Go to Zig. This is an **MVP (Minimum Viable Product)** that demonstrates core functionality but has known issues and incomplete features.
 
-**Key Achievement**: ~2,500 lines of working Zig code implementing a complete init system with privilege escalation, process management, and graceful shutdown.
+**Key Achievement**: ~2,500 lines of Zig code implementing basic init system functionality - builds successfully on Zig 0.15.2, starts services, handles signals, and reaps processes.
+
+**Status**: 🚧 **Work in Progress** - Core functionality working, but not production-ready.
+
+## ⚠️ Important Notice
+
+**This is NOT production-ready code.** This PR represents:
+- ✅ A successful proof-of-concept showing the port is feasible
+- ✅ All core modules implemented and building
+- ✅ Basic functionality demonstrated (services start, signals work)
+- ❌ Known crashes on shutdown
+- ❌ Untested restart policies and edge cases
+- ❌ Unit tests not verified
+
+**Recommend:** Merge to a development branch, not main. More work needed before this can replace the Go version.
 
 ## 📊 Stats
 
@@ -167,22 +181,37 @@ docker logs zei-test | grep "Received SIGINT"
 
 ## ✅ What's Working
 
+- ✅ Builds successfully on Zig 0.15.2 (both x86_64 and ARM64)
 - ✅ YAML configuration parsing
-- ✅ Service registration and lifecycle management
+- ✅ Service registration
 - ✅ Process spawning with privilege dropping
 - ✅ User/group switching (setuid/setgid)
 - ✅ Environment variable passing
-- ✅ Signal handling (SIGINT/SIGTERM/SIGCHLD)
-- ✅ Process reaping (prevents zombies)
-- ✅ Graceful shutdown
-- ✅ Restart policies with backoff
-- ✅ Builds on both x86_64 and ARM64
+- ✅ Signal handling (SIGINT/SIGTERM/SIGCHLD properly received)
+- ✅ Basic process reaping
+- ✅ Services start and run
 
-## 🔧 Known Issues
+## 🔧 Known Issues & Incomplete Features
 
-- ⚠️ Memory cleanup during shutdown needs investigation (some allocations not freed)
-- ⚠️ More extensive restart policy testing needed
-- ⚠️ Unit tests need to be run and potentially updated
+### Critical Issues
+- ❌ **Memory corruption during shutdown** - Crashes when cleaning up services
+- ❌ **Unit tests not verified** - Haven't run the test suite, likely broken
+- ❌ **Restart policies untested** - Code is there but not validated
+- ❌ **Process reaping may have edge cases** - Basic functionality works but needs thorough testing
+
+### Missing Features
+- ⚠️ **No service health checks** - Planned but not implemented
+- ⚠️ **No runtime service management** - Can't start/stop services after init
+- ⚠️ **Limited error handling** - Many error paths just panic or print
+- ⚠️ **No resource limits** - CPU/memory limits not implemented
+- ⚠️ **No structured logging** - Just debug prints
+- ⚠️ **Incomplete graceful shutdown** - Memory issues prevent clean exit
+
+### Testing Gaps
+- ⚠️ Services start but long-term stability unknown
+- ⚠️ Restart backoff logic not tested
+- ⚠️ Zombie reaping works for simple cases, edge cases unknown
+- ⚠️ Signal handling works but only basic scenarios tested
 
 ## 📝 Configuration Example
 
@@ -224,14 +253,27 @@ docker run --privileged \
 - **`.claude/claude.md`** - Zig 0.15.2 migration guide
 - **`test/README.md`** - Docker testing guide
 
-## 🎯 Future Improvements
+## 🎯 Next Steps to Complete the Port
 
-1. **Logging** - Structured logging with log levels
-2. **Advanced Shutdown** - Configurable timeouts, retry logic
-3. **Resource Limits** - CPU/memory limits per service
-4. **Health Checks** - Service health monitoring
-5. **API/CLI** - Runtime service management
-6. **Testing** - Comprehensive unit and integration tests
+### High Priority (Blocking Production Use)
+1. **Fix memory corruption on shutdown** - Critical blocker
+2. **Fix and run unit tests** - Ensure core functionality is stable
+3. **Test restart policies thoroughly** - Validate backoff, different policies
+4. **Robust error handling** - Replace panics with proper error handling
+5. **Graceful shutdown** - Clean up all resources properly
+
+### Medium Priority (Feature Parity with Go Version)
+6. **Service health checks** - Monitor service health
+7. **Advanced shutdown** - Configurable timeouts, retry logic
+8. **Resource limits** - CPU/memory limits per service
+9. **Structured logging** - Replace debug prints with proper logging
+10. **Integration tests** - End-to-end testing with real scenarios
+
+### Lower Priority (Nice to Have)
+11. **Runtime service management** - Start/stop services after init
+12. **API/CLI** - Remote control and status monitoring
+13. **Performance optimization** - Profile and optimize hot paths
+14. **Documentation** - More examples and guides
 
 ## 🔍 Technical Highlights
 
@@ -276,27 +318,41 @@ try list.append(allocator, item);
 
 ---
 
-## Checklist
+## Status Checklist
 
-- [x] All modules implemented (~2,500 lines)
-- [x] Builds successfully on Zig 0.15.2
-- [x] Docker infrastructure complete
-- [x] Signal handling working (SIGINT/SIGTERM/SIGCHLD)
-- [x] Process reaping working
-- [x] Privilege escalation working
-- [x] Configuration parsing working
-- [x] Documentation complete
-- [ ] All unit tests passing (needs verification)
-- [ ] Memory cleanup on shutdown (known issue)
+### ✅ Completed
+- [x] All 7 core modules implemented (~2,500 lines)
+- [x] Builds successfully on Zig 0.15.2 (x86_64 + ARM64)
+- [x] Docker testing infrastructure
+- [x] Signal handling (SIGINT/SIGTERM/SIGCHLD received)
+- [x] Basic process reaping
+- [x] Basic privilege escalation (setuid/setgid)
+- [x] Configuration parsing (YAML)
+- [x] Zig 0.15.2 compatibility documentation
+
+### 🚧 Partially Working
+- [~] Services start and run (but shutdown crashes)
+- [~] Process reaping (works but edge cases unknown)
+- [~] Restart policies (implemented but untested)
+
+### ❌ Not Working / Not Verified
+- [ ] Memory cleanup on shutdown (crashes)
+- [ ] Unit tests (haven't been run)
+- [ ] Graceful shutdown (memory issues)
+- [ ] Long-running stability
+- [ ] Restart policy validation
+- [ ] Service health checks
+- [ ] Advanced error handling
 
 ## Breaking Changes
 
-None - this is the initial Zig implementation based on the Go version.
+None - this is an initial port, not a replacement for the Go version yet.
 
 ## Migration from Go Version
 
-For users of the original Go `pei`:
-- Configuration format is **identical** (YAML)
-- Behavior is **compatible**
+**DO NOT migrate yet** - this port is not complete. For users of the original Go `pei`:
+- Configuration format is **identical** (YAML) ✅
+- Behavior is **intended to be compatible** (not fully validated) ⚠️
 - Binary name changed: `pei` → `zei` (Zig version)
-- Performance characteristics may differ
+- Performance characteristics unknown (not benchmarked)
+- **Continue using the Go version for production**

@@ -55,13 +55,15 @@ Each session is designed to produce a compilable, testable increment. Sessions b
 - [x] Verify: `zig build test` passes
 
 ### Session 3: Privilege Management + User Lookup (C Interop)
-- [ ] Implement libc bindings for `getpwnam`, `getgrnam` in user_lookup.zig
-- [ ] `lookupUIDGID(username, groupname) -> {uid, gid}`
-- [ ] Implement `dropPrivileges(app_user, app_group)` — setreuid/setregid
-- [ ] Implement `elevatePrivileges()` — restore effective UID/GID to root
-- [ ] Handle partial failure recovery (GID fails after UID succeeds)
-- [ ] Write unit tests (where possible without root — test user lookup, test error paths)
-- [ ] Verify: `zig build test` passes
+- [x] Implement libc bindings for `getpwnam`, `getgrnam` in user_lookup.zig
+- [x] `lookup(username, groupname) -> Credentials{uid, gid}`
+- [x] Implement `drop(username, groupname)` — setregid then setreuid (GID first for CAP_SETGID)
+- [x] Implement `elevate()` — setreuid then setregid (UID first to restore CAP_SETGID)
+- [x] Handle partial failure recovery with rollback
+- [x] Errno checking on getpwnam/getgrnam (distinguish not-found from system error)
+- [x] Docker test environment with Zig 0.15.2, appuser/appgroup for privilege tests
+- [x] Write unit tests + Docker round-trip test (drop to appuser, verify, elevate back)
+- [x] Verify: `zig build test` passes (macOS + Docker)
 
 ### Session 4: Process Spawning
 - [ ] Implement process.zig: spawn child with pipe setup for stdout/stderr

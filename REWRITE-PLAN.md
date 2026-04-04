@@ -66,24 +66,24 @@ Each session is designed to produce a compilable, testable increment. Sessions b
 - [x] Verify: `zig build test` passes (macOS + Docker)
 
 ### Session 4: Process Spawning
-- [ ] Implement process.zig: spawn child with pipe setup for stdout/stderr
-- [ ] Set child credentials via `SysProcAttr`-equivalent (setuid/setgid before exec)
-- [ ] Build argv from config command slice
-- [ ] Set environment variables on child
-- [ ] Set working directory
-- [ ] Return process handle + pipe file descriptors
-- [ ] Write unit tests (spawn `/bin/echo`, verify output on pipe)
-- [ ] Verify: `zig build test` passes
+- [x] Implement process.zig: spawn child with piped stdout/stderr via std.process.Child
+- [x] Set child credentials via uid/gid fields (setuid/setgid before exec)
+- [x] Build argv from config command slice
+- [x] Set environment variables on child
+- [x] Set working directory
+- [x] Return pid + pipe file handles (caller reaps via waitpid in reaper loop)
+- [x] Write unit tests (echo, stderr, cwd, env vars, exit codes, uid/gid)
+- [x] Verify: `zig build test` passes (macOS + Docker)
 
 ### Session 5: Service Monitor + Restart Logic
-- [ ] Implement ServiceState enum (stopped, starting, running, stopping, failed)
-- [ ] Implement ServiceStatus struct (running, pid, exit_code, restarts, started_at)
-- [ ] Restart policy evaluation: always, on-failure (non-zero exit), never
-- [ ] Max restart limit checking
-- [ ] Restart delay (configurable per service)
-- [ ] Oneshot service support (run once per interval)
-- [ ] Write unit tests for each restart policy scenario
-- [ ] Verify: `zig build test` passes
+- [x] Implement ServiceState enum (stopped, starting, running, stopping, failed)
+- [x] Implement ServiceStatus struct (running, pid, exit_code, restarts, started_at)
+- [x] Restart policy evaluation: always, on-failure (non-zero exit), never
+- [x] Max restart limit checking
+- [x] Restart delay (configurable per service)
+- [x] Oneshot service support (run once per interval)
+- [x] Write unit tests for each restart policy scenario
+- [x] Verify: `zig build test` passes
 
 ### Session 6: Zombie Reaper
 - [ ] Implement reaper.zig: `reapChildren()` using waitpid with WNOHANG

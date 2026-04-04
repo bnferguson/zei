@@ -1,9 +1,29 @@
 const std = @import("std");
+const posix = std.posix;
 const config = @import("config.zig");
 const ipc = @import("ipc.zig");
 
-const stdout = std.io.getStdOut().writer();
-const stderr = std.io.getStdErr().writer();
+fn writeOut(msg: []const u8) void {
+    _ = posix.write(posix.STDOUT_FILENO, msg) catch {};
+}
+
+fn writeErr(msg: []const u8) void {
+    _ = posix.write(posix.STDERR_FILENO, msg) catch {};
+}
+
+/// Fixed-buffer formatted write to stdout.
+fn printOut(comptime fmt: []const u8, args: anytype) void {
+    var buf: [4096]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf, fmt, args) catch return;
+    writeOut(msg);
+}
+
+/// Fixed-buffer formatted write to stderr.
+fn printErr(comptime fmt: []const u8, args: anytype) void {
+    var buf: [4096]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf, fmt, args) catch return;
+    writeErr(msg);
+}
 
 /// Run the CLI with the given arguments. Returns true if a command was
 /// handled, false if the caller should fall through to daemon mode.
@@ -28,20 +48,20 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8, config_path: 
         };
     } else if (std.mem.eql(u8, command, "restart")) {
         if (args.len < 2) {
-            stderr.writeAll("error: restart requires a service name\n") catch {};
+            writeErr("error: restart requires a service name\n");
             return true;
         }
         restartService(allocator, args[1]);
     } else if (std.mem.eql(u8, command, "signal")) {
         if (args.len < 2) {
-            stderr.writeAll("error: signal requires service:signal format (e.g., echo:HUP)\n") catch {};
+            writeErr("error: signal requires service:signal format (e.g., echo:HUP)\n");
             return true;
         }
         sendSignal(allocator, args[1]);
     } else if (std.mem.eql(u8, command, "help") or std.mem.eql(u8, command, "-h") or std.mem.eql(u8, command, "--help")) {
         printUsage();
     } else {
-        stderr.print("unknown command: {s}\nrun 'zei help' for usage\n", .{command}) catch {};
+        printErr("unknown command: {s}\nrun 'zei help' for usage\n", .{command});
     }
 
     return true;
@@ -54,7 +74,7 @@ fn listFromDaemon(allocator: std.mem.Allocator) !void {
     defer resp.deinit();
 
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, resp.slice(), .{}) catch {
-        stderr.writeAll("error: invalid response from daemon\n") catch {};
+        writeErr("error: invalid response from daemon\n");
         return;
     };
     defer parsed.deinit();
@@ -70,7 +90,7 @@ fn statusFromDaemon(allocator: std.mem.Allocator, service_name: ?[]const u8) !vo
     defer resp.deinit();
 
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, resp.slice(), .{}) catch {
-        stderr.writeAll("error: invalid response from daemon\n") catch {};
+        writeErr("error: invalid response from daemon\n");
         return;
     };
     defer parsed.deinit();
@@ -83,7 +103,7 @@ fn statusFromDaemon(allocator: std.mem.Allocator, service_name: ?[]const u8) !vo
         }
         if (parsed.value.object.get("message")) |msg| {
             switch (msg) {
-                .string => |s| stderr.print("error: {s}\n", .{s}) catch {},
+                .string => |s| printErr("error: {s}\n", .{s}),
                 else => {},
             }
         }
@@ -98,7 +118,7 @@ fn restartService(allocator: std.mem.Allocator, name: []const u8) void {
         .command = "restart",
         .service = name,
     }) catch {
-        stderr.writeAll("error: cannot connect to daemon\n") catch {};
+        writeErr("error: cannot connect to daemon\n");
         return;
     };
     defer resp.deinit();
@@ -109,7 +129,7 @@ fn restartService(allocator: std.mem.Allocator, name: []const u8) void {
 fn sendSignal(allocator: std.mem.Allocator, arg: []const u8) void {
     // Parse service:signal format.
     const colon = std.mem.indexOfScalar(u8, arg, ':') orelse {
-        stderr.writeAll("error: format should be service:signal (e.g., echo:HUP)\n") catch {};
+        writeErr("error: format should be service:signal (e.g., echo:HUP)\n");
         return;
     };
 
@@ -117,7 +137,7 @@ fn sendSignal(allocator: std.mem.Allocator, arg: []const u8) void {
     const signal_name = arg[colon + 1 ..];
 
     if (service_name.len == 0 or signal_name.len == 0) {
-        stderr.writeAll("error: format should be service:signal (e.g., echo:HUP)\n") catch {};
+        writeErr("error: format should be service:signal (e.g., echo:HUP)\n");
         return;
     }
 
@@ -126,7 +146,7 @@ fn sendSignal(allocator: std.mem.Allocator, arg: []const u8) void {
         .service = service_name,
         .signal = signal_name,
     }) catch {
-        stderr.writeAll("error: cannot connect to daemon\n") catch {};
+        writeErr("error: cannot connect to daemon\n");
         return;
     };
     defer resp.deinit();
@@ -138,41 +158,41 @@ fn sendSignal(allocator: std.mem.Allocator, arg: []const u8) void {
 
 fn listFromConfig(allocator: std.mem.Allocator, config_path: []const u8) void {
     var cfg = config.load(allocator, config_path) catch {
-        stderr.writeAll("error: cannot load config\n") catch {};
+        writeErr("error: cannot load config\n");
         return;
     };
     defer cfg.deinit();
 
     printTableHeader();
     for (cfg.services) |svc| {
-        stdout.print("{s:<20} {s:<10} {s:<8} {s:<12} {s:<10}\n", .{
+        printOut("{s:<20} {s:<10} {s:<8} {s:<12} {s:<10}\n", .{
             svc.name, "stopped", "-", "-", "-",
-        }) catch {};
+        });
     }
 }
 
 fn statusFromConfig(allocator: std.mem.Allocator, config_path: []const u8, service_name: ?[]const u8) void {
     var cfg = config.load(allocator, config_path) catch {
-        stderr.writeAll("error: cannot load config\n") catch {};
+        writeErr("error: cannot load config\n");
         return;
     };
     defer cfg.deinit();
 
     if (service_name) |name| {
         const svc = cfg.getService(name) orelse {
-            stderr.print("error: service '{s}' not found\n", .{name}) catch {};
+            printErr("error: service '{s}' not found\n", .{name});
             return;
         };
-        stdout.print("Service: {s}\n", .{svc.name}) catch {};
-        stdout.print("Command: ", .{}) catch {};
+        printOut("Service: {s}\n", .{svc.name});
+        printOut("Command: ", .{});
         for (svc.command) |arg| {
-            stdout.print("{s} ", .{arg}) catch {};
+            printOut("{s} ", .{arg});
         }
-        stdout.writeByte('\n') catch {};
-        stdout.print("User: {s}\n", .{svc.user}) catch {};
-        stdout.print("Group: {s}\n", .{svc.group}) catch {};
-        stdout.print("Restart: {s}\n", .{@tagName(svc.restart)}) catch {};
-        stdout.writeAll("Status: stopped (daemon not running)\n") catch {};
+        writeOut("\n");
+        printOut("User: {s}\n", .{svc.user});
+        printOut("Group: {s}\n", .{svc.group});
+        printOut("Restart: {s}\n", .{@tagName(svc.restart)});
+        writeOut("Status: stopped (daemon not running)\n");
     } else {
         listFromConfig(allocator, config_path);
     }
@@ -181,12 +201,12 @@ fn statusFromConfig(allocator: std.mem.Allocator, config_path: []const u8, servi
 // -- Output formatting --
 
 fn printTableHeader() void {
-    stdout.print("{s:<20} {s:<10} {s:<8} {s:<12} {s:<10}\n", .{
+    printOut("{s:<20} {s:<10} {s:<8} {s:<12} {s:<10}\n", .{
         "NAME", "STATUS", "PID", "RESTARTS", "UPTIME",
-    }) catch {};
-    stdout.print("{s:<20} {s:<10} {s:<8} {s:<12} {s:<10}\n", .{
+    });
+    printOut("{s:<20} {s:<10} {s:<8} {s:<12} {s:<10}\n", .{
         "----", "------", "---", "--------", "------",
-    }) catch {};
+    });
 }
 
 fn printServiceTable(json: *const std.json.Value) void {
@@ -250,9 +270,9 @@ fn printServiceRow(name: []const u8, svc: *const std.json.ObjectMap) void {
         else => if (running) "running" else "stopped",
     } else if (running) "running" else "stopped";
 
-    stdout.print("{s:<20} {s:<10} {s:<8} {s:<12} {s:<10}\n", .{
+    printOut("{s:<20} {s:<10} {s:<8} {s:<12} {s:<10}\n", .{
         name, state_str, pid_str, restarts_str, uptime_str,
-    }) catch {};
+    });
 }
 
 fn printServiceDetail(svc: *const std.json.Value) void {
@@ -266,18 +286,18 @@ fn printServiceDetail(svc: *const std.json.Value) void {
         else => "unknown",
     } else "unknown";
 
-    stdout.print("Service: {s}\n", .{name}) catch {};
+    printOut("Service: {s}\n", .{name});
 
     const state = if (obj.get("state")) |v| switch (v) {
         .string => |s| s,
         else => "unknown",
     } else "unknown";
-    stdout.print("State: {s}\n", .{state}) catch {};
+    printOut("State: {s}\n", .{state});
 
     if (obj.get("pid")) |v| {
         switch (v) {
             .integer => |i| if (i > 0) {
-                stdout.print("PID: {d}\n", .{i}) catch {};
+                printOut("PID: {d}\n", .{i});
             },
             else => {},
         }
@@ -285,7 +305,7 @@ fn printServiceDetail(svc: *const std.json.Value) void {
 
     if (obj.get("restarts")) |v| {
         switch (v) {
-            .integer => |i| stdout.print("Restarts: {d}\n", .{i}) catch {},
+            .integer => |i| printOut("Restarts: {d}\n", .{i}),
             else => {},
         }
     }
@@ -296,7 +316,7 @@ fn printServiceDetail(svc: *const std.json.Value) void {
                 const now = std.time.timestamp();
                 const elapsed: u64 = if (now > start) @intCast(now - start) else 0;
                 var buf: [16]u8 = undefined;
-                stdout.print("Uptime: {s}\n", .{formatUptime(&buf, elapsed)}) catch {};
+                printOut("Uptime: {s}\n", .{formatUptime(&buf, elapsed)});
             },
             else => {},
         }
@@ -305,7 +325,7 @@ fn printServiceDetail(svc: *const std.json.Value) void {
 
 fn printResultMessage(allocator: std.mem.Allocator, resp: []const u8) void {
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, resp, .{}) catch {
-        stderr.writeAll("error: invalid response\n") catch {};
+        writeErr("error: invalid response\n");
         return;
     };
     defer parsed.deinit();
@@ -321,9 +341,9 @@ fn printResultMessage(allocator: std.mem.Allocator, resp: []const u8) void {
     } else "";
 
     if (success) {
-        stdout.print("{s}\n", .{msg}) catch {};
+        printOut("{s}\n", .{msg});
     } else {
-        stderr.print("error: {s}\n", .{msg}) catch {};
+        printErr("error: {s}\n", .{msg});
     }
 }
 
@@ -346,7 +366,7 @@ pub fn formatUptime(buf: *[16]u8, seconds: u64) []const u8 {
 }
 
 fn printUsage() void {
-    stdout.writeAll(
+    writeOut(
         \\Usage: zei [command] [options]
         \\
         \\Commands:
@@ -362,7 +382,7 @@ fn printUsage() void {
         \\When run as PID 1, zei starts in daemon mode.
         \\Otherwise, it operates as a CLI client.
         \\
-    ) catch {};
+    );
 }
 
 // -- Tests --

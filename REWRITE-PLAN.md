@@ -155,11 +155,11 @@ Each session is designed to produce a compilable, testable increment. Sessions b
 - [x] Verify: `zig build test` passes
 
 ### Session 12: Main Entry Point + Integration
-- [ ] Implement main.zig: flag parsing (-c config path, -help)
-- [ ] Route: PID 1 + root -> daemon mode; otherwise -> CLI mode
-- [ ] Read `ZEI_APP_USER` / `ZEI_APP_GROUP` env vars (default: "appuser")
-- [ ] Wire all modules together
-- [ ] Verify full build: `zig build`
+- [x] Implement main.zig: flag parsing (-c config path, -help)
+- [x] Route: PID 1 + root -> daemon mode; otherwise -> CLI mode
+- [x] Read `ZEI_APP_USER` / `ZEI_APP_GROUP` env vars (default: "appuser")
+- [x] Wire all modules together
+- [x] Verify full build: `zig build`
 
 ### Session 13: Docker + System Testing
 - [ ] Write Dockerfile (Alpine, Zig 0.15.2, create test users)

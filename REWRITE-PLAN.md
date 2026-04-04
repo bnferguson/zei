@@ -47,12 +47,12 @@ Each session is designed to produce a compilable, testable increment. Sessions b
 - [x] Verify: `zig build test` passes
 
 ### Session 2: Logging
-- [ ] Implement structured logger (text and JSON output modes)
-- [ ] Read `ZEI_LOG_LEVEL` (debug/info/warn/error) and `ZEI_LOG_FORMAT` (text/json) from env
-- [ ] Component-scoped logging (`getLogger("reaper")` adds component field)
-- [ ] Helper functions: `logServiceInfo`, `logServiceError`
-- [ ] Write unit tests for level filtering and format output
-- [ ] Verify: `zig build test` passes
+- [x] Implement structured logger (text and JSON output modes)
+- [x] Read `ZEI_LOG_LEVEL` (debug/info/warn/error) and `ZEI_LOG_FORMAT` (text/json) from env
+- [x] Component-scoped logging (`logger.scoped("reaper")` adds component field)
+- [x] Service-scoped logging (`logger.forService("echo")` adds service field)
+- [x] Write unit tests for level filtering and format output
+- [x] Verify: `zig build test` passes
 
 ### Session 3: Privilege Management + User Lookup (C Interop)
 - [ ] Implement libc bindings for `getpwnam`, `getgrnam` in user_lookup.zig

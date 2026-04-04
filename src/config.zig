@@ -1,365 +1,318 @@
 const std = @import("std");
 const Yaml = @import("yaml").Yaml;
 
-/// Restart policy for services
+const config_size_max = 1024 * 1024; // 1 MiB
+const max_services = 256;
+
+const ns_per_ms: u64 = 1_000_000;
+const ns_per_s: u64 = 1_000_000_000;
+const ns_per_m: u64 = 60 * ns_per_s;
+const ns_per_h: u64 = 60 * ns_per_m;
+
+const default_restart_delay_ns: u64 = ns_per_s;
+
 pub const RestartPolicy = enum {
     always,
-    on_failure,
+    @"on-failure",
     never,
+};
 
-    pub fn fromString(s: []const u8) ?RestartPolicy {
-        if (std.mem.eql(u8, s, "always")) return .always;
-        if (std.mem.eql(u8, s, "on-failure")) return .on_failure;
-        if (std.mem.eql(u8, s, "never")) return .never;
+pub const EnvironmentMap = std.StringArrayHashMapUnmanaged([]const u8);
+
+pub const Service = struct {
+    name: []const u8 = "",
+    command: []const []const u8 = &.{},
+    user: []const u8 = "root",
+    group: []const u8 = "root",
+    working_dir: ?[]const u8 = null,
+    environment: ?EnvironmentMap = null,
+    max_restarts: u32 = 0,
+    restart: RestartPolicy = .never,
+    restart_delay: ?[]const u8 = null,
+    depends_on: ?[]const []const u8 = null,
+    stdout: ?[]const u8 = null,
+    stderr: ?[]const u8 = null,
+    interval: ?[]const u8 = null,
+    oneshot: bool = false,
+    json_logs: bool = false,
+
+    /// Return the restart delay in nanoseconds, or a default of 1 second.
+    pub fn restartDelayNs(self: Service) u64 {
+        if (self.restart_delay) |delay_str| {
+            return parseDuration(delay_str) orelse default_restart_delay_ns;
+        }
+        return default_restart_delay_ns;
+    }
+
+    /// Return the oneshot interval in nanoseconds, or null if not set.
+    pub fn intervalNs(self: Service) ?u64 {
+        if (self.interval) |interval_str| {
+            return parseDuration(interval_str);
+        }
         return null;
     }
-
-    pub fn toString(self: RestartPolicy) []const u8 {
-        return switch (self) {
-            .always => "always",
-            .on_failure => "on-failure",
-            .never => "never",
-        };
-    }
 };
 
-/// Service configuration from YAML
-pub const ServiceConfig = struct {
-    name: []const u8,
-    command: []const []const u8, // Array of command and arguments
-    user: ?[]const u8 = null,
-    group: ?[]const u8 = null,
-    working_dir: ?[]const u8 = null,
-    env: ?std.StringHashMap([]const u8) = null,
-    restart: RestartPolicy = .always,
-
-    pub fn deinit(self: *ServiceConfig, allocator: std.mem.Allocator) void {
-        allocator.free(self.name);
-        for (self.command) |arg| {
-            allocator.free(arg);
-        }
-        allocator.free(self.command);
-
-        if (self.user) |user| allocator.free(user);
-        if (self.group) |group| allocator.free(group);
-        if (self.working_dir) |wd| allocator.free(wd);
-
-        if (self.env) |*env_map| {
-            var it = env_map.iterator();
-            while (it.next()) |entry| {
-                allocator.free(entry.key_ptr.*);
-                allocator.free(entry.value_ptr.*);
-            }
-            env_map.deinit();
-        }
-    }
-};
-
-/// Top-level configuration
 pub const Config = struct {
-    services: []ServiceConfig,
-    allocator: std.mem.Allocator,
+    version: []const u8,
+    services: []Service,
+    arena: std.heap.ArenaAllocator,
 
     pub fn deinit(self: *Config) void {
-        for (self.services) |*service| {
-            service.deinit(self.allocator);
+        self.arena.deinit();
+        self.* = undefined;
+    }
+
+    /// Look up a service by name. Returns null if not found.
+    pub fn getService(self: *const Config, name: []const u8) ?*const Service {
+        for (self.services) |*svc| {
+            if (std.mem.eql(u8, svc.name, name)) return svc;
         }
-        self.allocator.free(self.services);
+        return null;
     }
 };
 
-/// Parse configuration file
-pub fn parseConfigFile(allocator: std.mem.Allocator, file_path: []const u8) !Config {
-    // Read the file
-    const file = try std.fs.cwd().openFile(file_path, .{});
+pub const LoadError = error{
+    FileNotFound,
+    ParseFailed,
+};
+
+/// Load and parse a YAML configuration file into a Config.
+/// The caller must call Config.deinit() when done.
+pub fn load(allocator: std.mem.Allocator, path: []const u8) !Config {
+    const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return LoadError.FileNotFound,
+        else => return LoadError.ParseFailed,
+    };
     defer file.close();
 
-    const file_size = try file.getEndPos();
-    const content = try allocator.alloc(u8, file_size);
-    defer allocator.free(content);
+    const source = file.readToEndAllocOptions(allocator, config_size_max, null, @enumFromInt(0), 0) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return LoadError.ParseFailed,
+    };
+    defer allocator.free(source);
 
-    const bytes_read = try file.readAll(content);
-    if (bytes_read != file_size) {
-        return error.IncompleteRead;
-    }
-
-    return parseConfig(allocator, content);
+    return loadFromSource(allocator, source);
 }
 
-/// Parse configuration from YAML string
-pub fn parseConfig(allocator: std.mem.Allocator, yaml_content: []const u8) !Config {
-    var yaml: Yaml = .{ .source = yaml_content };
-    try yaml.load(allocator);
+/// Parse YAML source into a Config. Factored out for testability.
+fn loadFromSource(allocator: std.mem.Allocator, source: [:0]const u8) !Config {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    errdefer arena.deinit();
+    const alloc = arena.allocator();
+
+    var yaml: Yaml = .{ .source = source };
     defer yaml.deinit(allocator);
-
-    if (yaml.docs.items.len == 0) {
-        return error.EmptyConfiguration;
-    }
-
-    const doc = yaml.docs.items[0];
-
-    // Get the root mapping
-    const root_map = doc.map;
-
-    // Get the services array
-    const services_node = root_map.get("services") orelse {
-        return error.MissingServicesKey;
+    yaml.load(allocator) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return LoadError.ParseFailed,
     };
 
-    if (services_node != .list) {
-        return error.ServicesNotArray;
+    if (yaml.docs.items.len == 0) return LoadError.ParseFailed;
+    const root = yaml.docs.items[0].asMap() orelse return LoadError.ParseFailed;
+
+    // Version (optional, defaults to "1.0").
+    const version = if (root.get("version")) |v|
+        try alloc.dupe(u8, v.asScalar() orelse return LoadError.ParseFailed)
+    else
+        "1.0";
+
+    // Services map.
+    const services_map = (root.get("services") orelse return LoadError.ParseFailed).asMap() orelse
+        return LoadError.ParseFailed;
+
+    if (services_map.keys().len > max_services) return LoadError.ParseFailed;
+
+    var services: std.ArrayListUnmanaged(Service) = .{};
+    for (services_map.keys(), services_map.values()) |svc_name, svc_value| {
+        const svc_map = svc_value.asMap() orelse return LoadError.ParseFailed;
+        const svc = try parseService(alloc, svc_name, svc_map);
+        try services.append(alloc, svc);
     }
 
-    const services_list = services_node.list;
-    var services: std.ArrayList(ServiceConfig) = .empty;
-    try services.ensureTotalCapacity(allocator, services_list.len);
-    errdefer {
-        for (services.items) |*service| {
-            service.deinit(allocator);
-        }
-        services.deinit(allocator);
-    }
-
-    // Parse each service
-    for (services_list) |service_node| {
-        if (service_node != .map) {
-            return error.ServiceNotMapping;
-        }
-
-        const service_map = service_node.map;
-
-        // Parse required field: name
-        const name_node = service_map.get("name") orelse {
-            return error.MissingServiceName;
-        };
-        if (name_node != .scalar) {
-            return error.ServiceNameNotString;
-        }
-        const name = try allocator.dupe(u8, name_node.scalar);
-        errdefer allocator.free(name);
-
-        // Parse required field: command (can be string or array)
-        const command_node = service_map.get("command") orelse {
-            return error.MissingServiceCommand;
-        };
-
-        const command = try parseCommand(allocator, command_node);
-        errdefer {
-            for (command) |arg| allocator.free(arg);
-            allocator.free(command);
-        }
-
-        // Parse optional fields
-        const user = if (service_map.get("user")) |node|
-            if (node == .scalar) try allocator.dupe(u8, node.scalar) else null
-        else
-            null;
-        errdefer if (user) |u| allocator.free(u);
-
-        const group = if (service_map.get("group")) |node|
-            if (node == .scalar) try allocator.dupe(u8, node.scalar) else null
-        else
-            null;
-        errdefer if (group) |g| allocator.free(g);
-
-        const working_dir = if (service_map.get("working_dir")) |node|
-            if (node == .scalar) try allocator.dupe(u8, node.scalar) else null
-        else
-            null;
-        errdefer if (working_dir) |wd| allocator.free(wd);
-
-        // Parse environment variables
-        var env = if (service_map.get("env")) |env_node| blk: {
-            if (env_node != .map) break :blk null;
-
-            var env_map = std.StringHashMap([]const u8).init(allocator);
-            errdefer env_map.deinit();
-
-            var it = env_node.map.iterator();
-            while (it.next()) |entry| {
-                const key = try allocator.dupe(u8, entry.key_ptr.*);
-                errdefer allocator.free(key);
-
-                const val_node = entry.value_ptr.*;
-                if (val_node != .scalar) continue;
-
-                const value = try allocator.dupe(u8, val_node.scalar);
-                errdefer allocator.free(value);
-
-                try env_map.put(key, value);
-            }
-
-            break :blk env_map;
-        } else null;
-        errdefer if (env) |*e| {
-            var it = e.iterator();
-            while (it.next()) |entry| {
-                allocator.free(entry.key_ptr.*);
-                allocator.free(entry.value_ptr.*);
-            }
-            e.deinit();
-        };
-
-        // Parse restart policy
-        const restart = if (service_map.get("restart")) |node| blk: {
-            if (node != .scalar) break :blk RestartPolicy.always;
-            const policy = RestartPolicy.fromString(node.scalar) orelse {
-                std.debug.print("Warning: Invalid restart policy '{s}' for service '{s}', defaulting to 'always'\n", .{ node.scalar, name });
-                break :blk RestartPolicy.always;
-            };
-            break :blk policy;
-        } else RestartPolicy.always;
-
-        // Create service config
-        const service_config = ServiceConfig{
-            .name = name,
-            .command = command,
-            .user = user,
-            .group = group,
-            .working_dir = working_dir,
-            .env = env,
-            .restart = restart,
-        };
-
-        try services.append(allocator, service_config);
-    }
-
-    return Config{
-        .services = try services.toOwnedSlice(allocator),
-        .allocator = allocator,
+    return .{
+        .version = version,
+        .services = try services.toOwnedSlice(alloc),
+        .arena = arena,
     };
 }
 
-/// Parse command field (handles both string and array formats)
-fn parseCommand(allocator: std.mem.Allocator, command_node: anytype) ![][]const u8 {
-    if (command_node == .scalar) {
-        // Command is a string - split on whitespace
-        var args: std.ArrayList([]const u8) = .empty;
-        errdefer {
-            for (args.items) |arg| allocator.free(arg);
-            args.deinit(allocator);
-        }
+// All allocations use the arena, so partial failure is cleaned up by the
+// caller's errdefer arena.deinit().
+fn parseService(alloc: std.mem.Allocator, name: []const u8, map: Yaml.Map) !Service {
+    return .{
+        .name = try alloc.dupe(u8, name),
+        .command = try parseStringList(alloc, map.get("command")) orelse return LoadError.ParseFailed,
+        .user = try dupeScalarOr(alloc, map.get("user"), "root"),
+        .group = try dupeScalarOr(alloc, map.get("group"), "root"),
+        .working_dir = try dupeScalar(alloc, map.get("working_dir")),
+        .environment = try parseEnvironment(alloc, map.get("environment")),
+        .max_restarts = parseUint(u32, map.get("max_restarts")) orelse 0,
+        .restart = parseRestartPolicy(map.get("restart")),
+        .restart_delay = try dupeScalar(alloc, map.get("restart_delay")),
+        .depends_on = try parseStringList(alloc, map.get("depends_on")),
+        .stdout = try dupeScalar(alloc, map.get("stdout")),
+        .stderr = try dupeScalar(alloc, map.get("stderr")),
+        .interval = try dupeScalar(alloc, map.get("interval")),
+        .oneshot = parseBool(map.get("oneshot")),
+        .json_logs = parseBool(map.get("json_logs")),
+    };
+}
 
-        var it = std.mem.tokenizeAny(u8, command_node.scalar, " \t\n");
-        while (it.next()) |token| {
-            const arg = try allocator.dupe(u8, token);
-            try args.append(allocator, arg);
-        }
+// -- YAML extraction helpers --
 
-        if (args.items.len == 0) {
-            return error.EmptyCommand;
-        }
+fn dupeScalar(alloc: std.mem.Allocator, value: ?Yaml.Value) !?[]const u8 {
+    const v = value orelse return null;
+    const s = v.asScalar() orelse return null;
+    return try alloc.dupe(u8, s);
+}
 
-        return args.toOwnedSlice(allocator);
-    } else if (command_node == .list) {
-        // Command is an array
-        const cmd_list = command_node.list;
-        if (cmd_list.len == 0) {
-            return error.EmptyCommand;
-        }
+fn dupeScalarOr(alloc: std.mem.Allocator, value: ?Yaml.Value, default: []const u8) ![]const u8 {
+    return try dupeScalar(alloc, value) orelse default;
+}
 
-        var args: std.ArrayList([]const u8) = .empty;
-        try args.ensureTotalCapacity(allocator, cmd_list.len);
-        errdefer {
-            for (args.items) |arg| allocator.free(arg);
-            args.deinit(allocator);
-        }
+fn parseUint(comptime T: type, value: ?Yaml.Value) ?T {
+    const s = (value orelse return null).asScalar() orelse return null;
+    return std.fmt.parseInt(T, s, 10) catch null;
+}
 
-        for (cmd_list) |item| {
-            if (item != .scalar) {
-                return error.CommandArrayNotStrings;
-            }
-            const arg = try allocator.dupe(u8, item.scalar);
-            try args.append(allocator, arg);
-        }
+fn parseBool(value: ?Yaml.Value) bool {
+    const s = (value orelse return false).asScalar() orelse return false;
+    return std.mem.eql(u8, s, "true");
+}
 
-        return args.toOwnedSlice(allocator);
-    } else {
-        return error.CommandInvalidType;
+fn parseRestartPolicy(value: ?Yaml.Value) RestartPolicy {
+    const s = (value orelse return .never).asScalar() orelse return .never;
+    return std.meta.stringToEnum(RestartPolicy, s) orelse .never;
+}
+
+fn parseStringList(alloc: std.mem.Allocator, value: ?Yaml.Value) !?[]const []const u8 {
+    const list = (value orelse return null).asList() orelse return null;
+    const result = try alloc.alloc([]const u8, list.len);
+    for (list, 0..) |item, i| {
+        result[i] = try alloc.dupe(u8, item.asScalar() orelse return LoadError.ParseFailed);
     }
+    return result;
 }
 
-// Tests
-test "RestartPolicy.fromString" {
-    try std.testing.expectEqual(RestartPolicy.always, RestartPolicy.fromString("always").?);
-    try std.testing.expectEqual(RestartPolicy.on_failure, RestartPolicy.fromString("on-failure").?);
-    try std.testing.expectEqual(RestartPolicy.never, RestartPolicy.fromString("never").?);
-    try std.testing.expect(RestartPolicy.fromString("invalid") == null);
+fn parseEnvironment(alloc: std.mem.Allocator, value: ?Yaml.Value) !?EnvironmentMap {
+    const map = (value orelse return null).asMap() orelse return null;
+    var env: EnvironmentMap = .{};
+    for (map.keys(), map.values()) |key, val| {
+        const k = try alloc.dupe(u8, key);
+        const v = try alloc.dupe(u8, val.asScalar() orelse return LoadError.ParseFailed);
+        try env.put(alloc, k, v);
+    }
+    return env;
 }
 
-test "RestartPolicy.toString" {
-    try std.testing.expectEqualStrings("always", RestartPolicy.always.toString());
-    try std.testing.expectEqualStrings("on-failure", RestartPolicy.on_failure.toString());
-    try std.testing.expectEqualStrings("never", RestartPolicy.never.toString());
+// -- Duration parsing --
+
+/// Parse a duration string like "5s", "100ms", "2m", "1h" into nanoseconds.
+/// Returns null if the string is not a valid duration or on overflow.
+pub fn parseDuration(s: []const u8) ?u64 {
+    if (s.len == 0) return null;
+
+    var i: usize = 0;
+    while (i < s.len and (s[i] >= '0' and s[i] <= '9')) : (i += 1) {}
+    if (i == 0) return null;
+
+    const value = std.fmt.parseInt(u64, s[0..i], 10) catch return null;
+    const suffix = s[i..];
+
+    const multiplier: u64 = if (std.mem.eql(u8, suffix, "ns"))
+        1
+    else if (std.mem.eql(u8, suffix, "ms"))
+        ns_per_ms
+    else if (std.mem.eql(u8, suffix, "s"))
+        ns_per_s
+    else if (std.mem.eql(u8, suffix, "m"))
+        ns_per_m
+    else if (std.mem.eql(u8, suffix, "h"))
+        ns_per_h
+    else
+        return null;
+
+    return std.math.mul(u64, value, multiplier) catch null;
 }
 
-test "parse simple config" {
-    const yaml_content =
-        \\services:
-        \\  - name: test-service
-        \\    command: /bin/echo hello
-        \\    restart: always
-    ;
+// -- Tests --
 
-    var config = try parseConfig(std.testing.allocator, yaml_content);
-    defer config.deinit();
-
-    try std.testing.expectEqual(@as(usize, 1), config.services.len);
-    try std.testing.expectEqualStrings("test-service", config.services[0].name);
-    try std.testing.expectEqual(@as(usize, 2), config.services[0].command.len);
-    try std.testing.expectEqualStrings("/bin/echo", config.services[0].command[0]);
-    try std.testing.expectEqualStrings("hello", config.services[0].command[1]);
-    try std.testing.expectEqual(RestartPolicy.always, config.services[0].restart);
+test "parseDuration parses valid durations" {
+    try std.testing.expectEqual(@as(u64, 5_000_000_000), parseDuration("5s").?);
+    try std.testing.expectEqual(@as(u64, 100_000_000), parseDuration("100ms").?);
+    try std.testing.expectEqual(@as(u64, 120_000_000_000), parseDuration("2m").?);
+    try std.testing.expectEqual(@as(u64, 3_600_000_000_000), parseDuration("1h").?);
+    try std.testing.expectEqual(@as(u64, 500), parseDuration("500ns").?);
 }
 
-test "parse config with optional fields" {
-    const yaml_content =
-        \\services:
-        \\  - name: web-service
-        \\    command: ["/usr/bin/nginx", "-g", "daemon off;"]
-        \\    user: www-data
-        \\    group: www-data
-        \\    working_dir: /var/www
-        \\    restart: on-failure
-        \\    env:
-        \\      PORT: "8080"
-        \\      LOG_LEVEL: info
-    ;
-
-    var config = try parseConfig(std.testing.allocator, yaml_content);
-    defer config.deinit();
-
-    try std.testing.expectEqual(@as(usize, 1), config.services.len);
-
-    const service = config.services[0];
-    try std.testing.expectEqualStrings("web-service", service.name);
-    try std.testing.expectEqual(@as(usize, 3), service.command.len);
-    try std.testing.expectEqualStrings("/usr/bin/nginx", service.command[0]);
-    try std.testing.expectEqualStrings("www-data", service.user.?);
-    try std.testing.expectEqualStrings("www-data", service.group.?);
-    try std.testing.expectEqualStrings("/var/www", service.working_dir.?);
-    try std.testing.expectEqual(RestartPolicy.on_failure, service.restart);
-
-    try std.testing.expect(service.env != null);
-    try std.testing.expectEqualStrings("8080", service.env.?.get("PORT").?);
-    try std.testing.expectEqualStrings("info", service.env.?.get("LOG_LEVEL").?);
+test "parseDuration rejects invalid input" {
+    try std.testing.expect(parseDuration("") == null);
+    try std.testing.expect(parseDuration("abc") == null);
+    try std.testing.expect(parseDuration("5x") == null);
+    try std.testing.expect(parseDuration("s") == null);
 }
 
-test "missing required fields" {
-    const yaml_no_name =
-        \\services:
-        \\  - command: /bin/echo
-    ;
-    try std.testing.expectError(error.MissingServiceName, parseConfig(std.testing.allocator, yaml_no_name));
+test "parseDuration returns null on overflow" {
+    try std.testing.expect(parseDuration("99999999999999999h") == null);
+}
 
-    const yaml_no_command =
-        \\services:
-        \\  - name: test
-    ;
-    try std.testing.expectError(error.MissingServiceCommand, parseConfig(std.testing.allocator, yaml_no_command));
+test "load parses valid config file" {
+    var cfg = try load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
 
-    const yaml_no_services =
-        \\other: value
-    ;
-    try std.testing.expectError(error.MissingServicesKey, parseConfig(std.testing.allocator, yaml_no_services));
+    try std.testing.expectEqualStrings("1.0", cfg.version);
+    try std.testing.expect(cfg.services.len > 0);
+
+    const echo = cfg.getService("echo") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("echo", echo.name);
+    try std.testing.expectEqual(RestartPolicy.always, echo.restart);
+    try std.testing.expectEqual(@as(u32, 3), echo.max_restarts);
+    try std.testing.expectEqualStrings("appuser", echo.user);
+    try std.testing.expect(echo.command.len > 0);
+}
+
+test "load parses oneshot service" {
+    var cfg = try load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
+
+    const healthcheck = cfg.getService("healthcheck") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(healthcheck.oneshot);
+    try std.testing.expect(healthcheck.interval != null);
+    try std.testing.expect(healthcheck.depends_on != null);
+}
+
+test "load parses environment variables" {
+    var cfg = try load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
+
+    const zombie = cfg.getService("zombie_maker") orelse return error.TestUnexpectedResult;
+    const env = zombie.environment orelse return error.TestUnexpectedResult;
+    const log_level = env.get("LOG_LEVEL") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("debug", log_level);
+}
+
+test "load parses json_logs flag" {
+    var cfg = try load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
+
+    const json_logger = cfg.getService("json_logger") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(json_logger.json_logs);
+}
+
+test "load returns error for missing file" {
+    const result = load(std.testing.allocator, "nonexistent.yaml");
+    try std.testing.expectError(LoadError.FileNotFound, result);
+}
+
+test "Service.restartDelayNs returns parsed delay" {
+    const svc = Service{
+        .restart_delay = "5s",
+    };
+    try std.testing.expectEqual(@as(u64, 5_000_000_000), svc.restartDelayNs());
+}
+
+test "Service.restartDelayNs returns default for no delay" {
+    const svc = Service{};
+    try std.testing.expectEqual(default_restart_delay_ns, svc.restartDelayNs());
 }

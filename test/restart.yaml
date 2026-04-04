@@ -1,0 +1,29 @@
+version: "1.0"
+
+services:
+  # Exits immediately with error - should restart up to max_restarts
+  crasher:
+    command: ["sh", "-c", "echo 'crashing'; exit 1"]
+    user: appuser
+    group: appuser
+    restart: on-failure
+    max_restarts: 3
+    restart_delay: 1s
+
+  # Exits cleanly - should NOT restart with on-failure policy
+  clean_exit:
+    command: ["sh", "-c", "echo 'done'; exit 0"]
+    user: appuser
+    group: appuser
+    restart: on-failure
+    max_restarts: 3
+    restart_delay: 1s
+
+  # Exits immediately - should always restart
+  always_restart:
+    command: ["sh", "-c", "echo 'restarting'; exit 0"]
+    user: appuser
+    group: appuser
+    restart: always
+    max_restarts: 5
+    restart_delay: 1s

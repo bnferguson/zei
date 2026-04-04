@@ -1,18 +1,15 @@
-version: '3.8'
-
 services:
-  zei-test:
+  # Run zei as PID 1 with the full example config
+  zei:
+    build: .
+    init: false
+    command: ["-c", "/example/zei.yaml"]
+    stop_signal: SIGTERM
+    stop_grace_period: 35s
+
+  # Run unit tests inside Docker (Linux-only tests)
+  test:
     build:
       context: .
-      dockerfile: Dockerfile
-    image: zei:latest
-    container_name: zei-test
-    volumes:
-      - ./test/services-test.yml:/config/services.yml:ro
-    # Run as PID 1 to test full init functionality
-    init: false
-    # Allow the init system to work properly
-    privileged: true
-    # Interactive mode to see logs
-    stdin_open: true
-    tty: true
+      target: test
+    profiles: ["test"]

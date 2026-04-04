@@ -1,39 +1,55 @@
-# Example zei configuration file
-# This demonstrates the MVP features of zei
+version: "1.0"
 
 services:
-  # Simple service that runs a command
-  - name: echo-service
-    command: /bin/sh -c "while true; do echo 'Hello from echo-service'; sleep 5; done"
+  echo:
+    command: ["sh", "-c", "while true; do echo 'echo service running'; sleep 5; done"]
+    user: appuser
+    group: appuser
     restart: always
-    user: nobody
-    env:
-      LOG_LEVEL: info
+    max_restarts: 3
+    restart_delay: 5s
 
-  # Service running as a different user
-  - name: worker
-    command: ["/usr/bin/python3", "-c", "import time; [print(f'Worker tick {i}') or time.sleep(3) for i in range(100)]"]
+  counter:
+    command: ["sh", "-c", "i=0; while true; do echo \"counter: $i\"; i=$((i+1)); sleep 2; done"]
+    user: worker
+    group: worker
     restart: on-failure
-    user: nobody
-    working_dir: /tmp
+    max_restarts: 5
+    restart_delay: 2s
 
-  # Service that doesn't restart
-  - name: oneoff
-    command: /bin/echo "This runs once and exits"
-    restart: never
+  healthcheck:
+    command: ["sh", "-c", "echo 'Health check running at $(date)'; sleep 1"]
+    user: monitor
+    group: monitor
+    interval: 30s
+    oneshot: true
+    depends_on: ["echo", "counter"]
 
-  # Example of a more realistic service (uncomment if you have nginx)
-  # - name: web
-  #   command: /usr/sbin/nginx -g "daemon off;"
-  #   user: www-data
-  #   group: www-data
-  #   working_dir: /var/www
-  #   restart: always
-  #   env:
-  #     PORT: "8080"
+  zombie_maker:
+    command: ["/usr/local/bin/zombie_maker"]
+    user: zombie
+    group: zombie
+    restart: always
+    max_restarts: 10
+    restart_delay: 5s
+    stdout: /dev/stdout
+    stderr: /dev/stderr
+    environment:
+      LOG_LEVEL: debug
 
-# Notes:
-# - All specified users and groups must exist in the container
-# - The zei binary must have the setuid bit set and be owned by root
-# - Services will be started in the order they appear in this file
-# - Restart policies: always, on-failure, never
+  signal_handler:
+    command: ["sh", "/example/signal-handler.sh"]
+    user: appuser
+    group: appuser
+    restart: always
+    max_restarts: 3
+    restart_delay: 5s
+
+  json_logger:
+    command: ["sh", "/example/json-logger.sh"]
+    user: appuser
+    group: appuser
+    restart: always
+    max_restarts: 3
+    restart_delay: 5s
+    json_logs: true

@@ -1,314 +1,367 @@
 const std = @import("std");
 const config = @import("config.zig");
-const service_mod = @import("service.zig");
-const service_manager = @import("service_manager.zig");
+const posix = std.posix;
 
-const Service = service_mod.Service;
-const ServiceState = service_mod.ServiceState;
-const ServiceManager = service_manager.ServiceManager;
-const RestartPolicy = config.RestartPolicy;
+pub const ServiceState = enum {
+    stopped,
+    starting,
+    running,
+    stopping,
+    failed,
 
-/// Determine if a service should be restarted based on its policy and exit status
-pub fn shouldRestart(policy: RestartPolicy, exit_code: ?i32) bool {
-    return switch (policy) {
-        .always => true,
-        .on_failure => blk: {
-            // Restart if exit code is non-zero
-            if (exit_code) |code| {
-                break :blk code != 0;
-            }
-            // If we don't have an exit code (e.g., killed by signal), consider it a failure
-            break :blk true;
-        },
-        .never => false,
-    };
-}
-
-/// Handle a service exit event
-pub fn handleServiceExit(
-    manager: *ServiceManager,
-    pid: std.posix.pid_t,
-    exit_code: ?i32,
-    signal: ?u8,
-) !bool {
-    // Find the service by PID
-    const service = manager.getServiceByPid(pid) orelse {
-        std.debug.print("Warning: Received exit for unknown PID {d}\n", .{pid});
-        return false;
-    };
-
-    const service_name = service.config.name;
-
-    // Update service state based on exit
-    if (signal) |sig| {
-        try manager.markSignaled(pid, sig);
-        std.debug.print("[{s}] Service killed by signal {d}\n", .{ service_name, sig });
-    } else if (exit_code) |code| {
-        try manager.markExited(pid, code);
-        if (code == 0) {
-            std.debug.print("[{s}] Service exited successfully (code 0)\n", .{service_name});
-        } else {
-            std.debug.print("[{s}] Service exited with error (code {d})\n", .{ service_name, code });
-        }
-    } else {
-        try manager.markExited(pid, -1);
-        std.debug.print("[{s}] Service exited with unknown status\n", .{service_name});
+    pub fn label(self: ServiceState) [:0]const u8 {
+        return @tagName(self);
     }
-
-    // Check if we should restart
-    const should_restart = shouldRestart(service.config.restart, exit_code);
-
-    if (should_restart) {
-        std.debug.print("[{s}] Restart policy: {s} - will restart\n", .{
-            service_name,
-            service.config.restart.toString(),
-        });
-
-        // Increment restart counter
-        try manager.incrementRestartCount(service_name);
-
-        const restart_count = service.info.restart_count;
-        std.debug.print("[{s}] Restart count: {d}\n", .{ service_name, restart_count });
-
-        return true; // Signal that restart is needed
-    } else {
-        std.debug.print("[{s}] Restart policy: {s} - will not restart\n", .{
-            service_name,
-            service.config.restart.toString(),
-        });
-
-        return false; // No restart needed
-    }
-}
-
-/// Log service lifecycle event
-pub fn logLifecycleEvent(service_name: []const u8, event: LifecycleEvent) void {
-    switch (event) {
-        .starting => std.debug.print("[{s}] Starting service...\n", .{service_name}),
-        .started => |pid| std.debug.print("[{s}] Service started (PID {d})\n", .{ service_name, pid }),
-        .stopping => std.debug.print("[{s}] Stopping service...\n", .{service_name}),
-        .stopped => std.debug.print("[{s}] Service stopped\n", .{service_name}),
-        .restarting => |count| std.debug.print("[{s}] Restarting service (restart #{d})...\n", .{ service_name, count }),
-        .failed => |err_msg| std.debug.print("[{s}] Service failed: {s}\n", .{ service_name, err_msg }),
-    }
-}
-
-/// Lifecycle events for logging
-pub const LifecycleEvent = union(enum) {
-    starting: void,
-    started: std.posix.pid_t,
-    stopping: void,
-    stopped: void,
-    restarting: u32,
-    failed: []const u8,
 };
 
-// Tests
-test "shouldRestart - always policy" {
-    // Always policy should always return true
-    try std.testing.expect(shouldRestart(.always, 0));
-    try std.testing.expect(shouldRestart(.always, 1));
-    try std.testing.expect(shouldRestart(.always, 127));
-    try std.testing.expect(shouldRestart(.always, null));
-}
+/// How a child process exited.
+pub const ExitInfo = union(enum) {
+    /// Normal termination with an exit code (0 = success).
+    exited: u8,
+    /// Killed by a signal.
+    signaled: u32,
 
-test "shouldRestart - on_failure policy" {
-    // Should restart on non-zero exit
-    try std.testing.expect(shouldRestart(.on_failure, 1));
-    try std.testing.expect(shouldRestart(.on_failure, 127));
+    pub fn isSuccess(self: ExitInfo) bool {
+        return switch (self) {
+            .exited => |code| code == 0,
+            .signaled => false,
+        };
+    }
+};
 
-    // Should NOT restart on zero exit
-    try std.testing.expect(!shouldRestart(.on_failure, 0));
+/// Per-service runtime status. Owned by the daemon, one per configured service.
+pub const ServiceStatus = struct {
+    name: []const u8,
+    state: ServiceState,
+    pid: ?posix.pid_t,
+    exit_info: ?ExitInfo,
+    restart_count: u32,
+    started_at: ?i64,
 
-    // Should restart if no exit code (signal termination)
-    try std.testing.expect(shouldRestart(.on_failure, null));
-}
+    pub fn init(name: []const u8) ServiceStatus {
+        return .{
+            .name = name,
+            .state = .stopped,
+            .pid = null,
+            .exit_info = null,
+            .restart_count = 0,
+            .started_at = null,
+        };
+    }
 
-test "shouldRestart - never policy" {
-    // Never policy should never return true
-    try std.testing.expect(!shouldRestart(.never, 0));
-    try std.testing.expect(!shouldRestart(.never, 1));
-    try std.testing.expect(!shouldRestart(.never, 127));
-    try std.testing.expect(!shouldRestart(.never, null));
-}
+    /// Record that the service process has been spawned.
+    pub fn recordStarted(self: *ServiceStatus, pid: posix.pid_t) void {
+        std.debug.assert(self.state == .stopped or self.state == .starting or self.state == .failed);
+        self.state = .running;
+        self.pid = pid;
+        self.exit_info = null;
+        self.started_at = std.time.timestamp();
+    }
 
-test "handleServiceExit - exit with code 0, always restart" {
-    var manager = ServiceManager.init(std.testing.allocator);
-    defer manager.deinit();
+    /// Mark the service as starting (before spawn attempt).
+    pub fn recordStarting(self: *ServiceStatus) void {
+        std.debug.assert(self.state == .stopped or self.state == .failed);
+        self.state = .starting;
+    }
 
-    // Register a service
-    const allocator = std.testing.allocator;
-    const name = try allocator.dupe(u8, "test-service");
-    const cmd = try allocator.alloc([]const u8, 1);
-    cmd[0] = try allocator.dupe(u8, "/bin/echo");
+    /// Mark the service as stopping (graceful shutdown in progress).
+    pub fn recordStopping(self: *ServiceStatus) void {
+        std.debug.assert(self.state == .running);
+        self.state = .stopping;
+    }
 
-    var service_config = config.ServiceConfig{
-        .name = name,
-        .command = cmd,
-        .user = null,
-        .group = null,
-        .working_dir = null,
-        .env = null,
-        .restart = .always,
+    /// Record that the process has exited. Transitions to .stopped by default;
+    /// the caller may upgrade to .failed after evaluating the restart decision.
+    pub fn recordExited(self: *ServiceStatus, info: ExitInfo) void {
+        std.debug.assert(self.state == .running or self.state == .stopping);
+        self.exit_info = info;
+        self.pid = null;
+        self.state = .stopped;
+    }
+
+    /// Mark the service as failed (e.g., after exhausting restart attempts).
+    pub fn recordFailed(self: *ServiceStatus) void {
+        std.debug.assert(self.state == .stopped);
+        self.state = .failed;
+    }
+
+    /// Mark the service as failed during startup (e.g., credential lookup or spawn error).
+    pub fn recordStartFailed(self: *ServiceStatus) void {
+        std.debug.assert(self.state == .starting);
+        self.state = .failed;
+    }
+
+    /// Elapsed seconds since the service started, or null if not started.
+    pub fn uptime(self: *const ServiceStatus) ?i64 {
+        const started = self.started_at orelse return null;
+        const now = std.time.timestamp();
+        return now - started;
+    }
+};
+
+/// What the daemon should do after a service exits.
+pub const RestartDecision = enum {
+    /// Restart the service after its configured delay.
+    restart,
+    /// Service is done; mark it stopped.
+    stop,
+    /// Max restarts exceeded; mark it failed.
+    exhausted,
+    /// Oneshot with interval: schedule the next run after the interval.
+    schedule,
+};
+
+/// Decide what to do after a service exits.
+///
+/// Pure function — reads config and status, returns a decision. The caller
+/// is responsible for acting on the decision (incrementing restart_count,
+/// setting state, sleeping for delay, etc.).
+pub fn evaluateRestart(
+    svc: *const config.Service,
+    status: *const ServiceStatus,
+    exit_info: ExitInfo,
+) RestartDecision {
+    std.debug.assert(std.mem.eql(u8, svc.name, status.name));
+
+    // Oneshot services have their own lifecycle.
+    if (svc.oneshot) {
+        if (svc.intervalNs() != null) return .schedule;
+        return .stop;
+    }
+
+    // If the daemon is shutting down (stopping state), never restart.
+    if (status.state == .stopping) return .stop;
+
+    const should_restart = switch (svc.restart) {
+        .always => true,
+        .@"on-failure" => !exit_info.isSuccess(),
+        .never => false,
     };
-    defer service_config.deinit(allocator);
 
-    try manager.registerService(service_config);
-    try manager.markStarted("test-service", 1234);
+    if (!should_restart) return .stop;
 
-    // Handle exit with code 0
-    const should_restart = try handleServiceExit(&manager, 1234, 0, null);
+    // Check max restart limit. max_restarts <= 0 means unlimited.
+    if (svc.max_restarts > 0) {
+        if (status.restart_count >= svc.max_restarts) {
+            return .exhausted;
+        }
+    }
 
-    try std.testing.expect(should_restart);
-
-    // Service should be in exited state
-    const service = manager.getServiceByName("test-service").?;
-    try std.testing.expectEqual(ServiceState.exited, service.info.state);
-    try std.testing.expectEqual(@as(i32, 0), service.info.exit_code.?);
-    try std.testing.expectEqual(@as(u32, 1), service.info.restart_count);
+    return .restart;
 }
 
-test "handleServiceExit - exit with code 1, on_failure restart" {
-    var manager = ServiceManager.init(std.testing.allocator);
-    defer manager.deinit();
+// -- Tests --
 
-    const allocator = std.testing.allocator;
-    const name = try allocator.dupe(u8, "test-service");
-    const cmd = try allocator.alloc([]const u8, 1);
-    cmd[0] = try allocator.dupe(u8, "/bin/echo");
-
-    var service_config = config.ServiceConfig{
-        .name = name,
-        .command = cmd,
-        .user = null,
-        .group = null,
-        .working_dir = null,
-        .env = null,
-        .restart = .on_failure,
+fn testService(overrides: struct {
+    restart: config.RestartPolicy = .never,
+    max_restarts: u32 = 0,
+    oneshot: bool = false,
+    interval: ?[]const u8 = null,
+}) config.Service {
+    return .{
+        .name = "test-svc",
+        .command = &.{"/bin/true"},
+        .restart = overrides.restart,
+        .max_restarts = overrides.max_restarts,
+        .oneshot = overrides.oneshot,
+        .interval = overrides.interval,
     };
-    defer service_config.deinit(allocator);
-
-    try manager.registerService(service_config);
-    try manager.markStarted("test-service", 1234);
-
-    // Handle exit with code 1 (failure)
-    const should_restart = try handleServiceExit(&manager, 1234, 1, null);
-
-    try std.testing.expect(should_restart);
-
-    const service = manager.getServiceByName("test-service").?;
-    try std.testing.expectEqual(ServiceState.exited, service.info.state);
-    try std.testing.expectEqual(@as(i32, 1), service.info.exit_code.?);
-    try std.testing.expectEqual(@as(u32, 1), service.info.restart_count);
 }
 
-test "handleServiceExit - exit with code 0, on_failure restart" {
-    var manager = ServiceManager.init(std.testing.allocator);
-    defer manager.deinit();
+// -- ServiceStatus tests --
 
-    const allocator = std.testing.allocator;
-    const name = try allocator.dupe(u8, "test-service");
-    const cmd = try allocator.alloc([]const u8, 1);
-    cmd[0] = try allocator.dupe(u8, "/bin/echo");
-
-    var service_config = config.ServiceConfig{
-        .name = name,
-        .command = cmd,
-        .user = null,
-        .group = null,
-        .working_dir = null,
-        .env = null,
-        .restart = .on_failure,
-    };
-    defer service_config.deinit(allocator);
-
-    try manager.registerService(service_config);
-    try manager.markStarted("test-service", 1234);
-
-    // Handle exit with code 0 (success) - should NOT restart
-    const should_restart = try handleServiceExit(&manager, 1234, 0, null);
-
-    try std.testing.expect(!should_restart);
-
-    const service = manager.getServiceByName("test-service").?;
-    try std.testing.expectEqual(ServiceState.exited, service.info.state);
-    try std.testing.expectEqual(@as(i32, 0), service.info.exit_code.?);
-    try std.testing.expectEqual(@as(u32, 0), service.info.restart_count); // No restart, counter not incremented
+test "ServiceStatus.init starts in stopped state" {
+    const status = ServiceStatus.init("echo");
+    try std.testing.expectEqual(ServiceState.stopped, status.state);
+    try std.testing.expect(status.pid == null);
+    try std.testing.expect(status.exit_info == null);
+    try std.testing.expectEqual(@as(u32, 0), status.restart_count);
+    try std.testing.expect(status.started_at == null);
 }
 
-test "handleServiceExit - exit with code 0, never restart" {
-    var manager = ServiceManager.init(std.testing.allocator);
-    defer manager.deinit();
+test "ServiceStatus transitions: stopped -> starting -> running -> exited" {
+    var status = ServiceStatus.init("echo");
 
-    const allocator = std.testing.allocator;
-    const name = try allocator.dupe(u8, "test-service");
-    const cmd = try allocator.alloc([]const u8, 1);
-    cmd[0] = try allocator.dupe(u8, "/bin/echo");
+    status.recordStarting();
+    try std.testing.expectEqual(ServiceState.starting, status.state);
 
-    var service_config = config.ServiceConfig{
-        .name = name,
-        .command = cmd,
-        .user = null,
-        .group = null,
-        .working_dir = null,
-        .env = null,
-        .restart = .never,
-    };
-    defer service_config.deinit(allocator);
+    status.recordStarted(42);
+    try std.testing.expectEqual(ServiceState.running, status.state);
+    try std.testing.expectEqual(@as(posix.pid_t, 42), status.pid.?);
+    try std.testing.expect(status.started_at != null);
 
-    try manager.registerService(service_config);
-    try manager.markStarted("test-service", 1234);
-
-    // Handle exit - should NOT restart
-    const should_restart = try handleServiceExit(&manager, 1234, 0, null);
-
-    try std.testing.expect(!should_restart);
-
-    const service = manager.getServiceByName("test-service").?;
-    try std.testing.expectEqual(ServiceState.exited, service.info.state);
-    try std.testing.expectEqual(@as(u32, 0), service.info.restart_count);
+    status.recordExited(.{ .exited = 0 });
+    try std.testing.expectEqual(ServiceState.stopped, status.state);
+    try std.testing.expect(status.pid == null);
+    try std.testing.expect(status.exit_info != null);
+    try std.testing.expect(status.exit_info.?.isSuccess());
 }
 
-test "handleServiceExit - killed by signal, always restart" {
-    var manager = ServiceManager.init(std.testing.allocator);
-    defer manager.deinit();
+test "ServiceStatus.recordFailed transitions stopped -> failed" {
+    var status = ServiceStatus.init("flaky");
+    status.recordStarted(10);
+    status.recordExited(.{ .exited = 1 });
+    try std.testing.expectEqual(ServiceState.stopped, status.state);
 
-    const allocator = std.testing.allocator;
-    const name = try allocator.dupe(u8, "test-service");
-    const cmd = try allocator.alloc([]const u8, 1);
-    cmd[0] = try allocator.dupe(u8, "/bin/echo");
-
-    var service_config = config.ServiceConfig{
-        .name = name,
-        .command = cmd,
-        .user = null,
-        .group = null,
-        .working_dir = null,
-        .env = null,
-        .restart = .always,
-    };
-    defer service_config.deinit(allocator);
-
-    try manager.registerService(service_config);
-    try manager.markStarted("test-service", 1234);
-
-    // Handle signal termination (SIGTERM = 15)
-    const should_restart = try handleServiceExit(&manager, 1234, null, 15);
-
-    try std.testing.expect(should_restart);
-
-    const service = manager.getServiceByName("test-service").?;
-    try std.testing.expectEqual(ServiceState.exited, service.info.state);
-    try std.testing.expectEqual(@as(u8, 15), service.info.exit_signal.?);
-    try std.testing.expectEqual(@as(u32, 1), service.info.restart_count);
+    status.recordFailed();
+    try std.testing.expectEqual(ServiceState.failed, status.state);
 }
 
-test "logLifecycleEvent" {
-    // Just verify these don't crash
-    logLifecycleEvent("test-service", .starting);
-    logLifecycleEvent("test-service", .{ .started = 1234 });
-    logLifecycleEvent("test-service", .stopping);
-    logLifecycleEvent("test-service", .stopped);
-    logLifecycleEvent("test-service", .{ .restarting = 3 });
-    logLifecycleEvent("test-service", .{ .failed = "test error" });
+test "ServiceStatus transitions: running -> stopping -> exited" {
+    var status = ServiceStatus.init("web");
+    status.recordStarted(100);
+
+    status.recordStopping();
+    try std.testing.expectEqual(ServiceState.stopping, status.state);
+
+    status.recordExited(.{ .signaled = 15 });
+    try std.testing.expect(status.pid == null);
+    try std.testing.expectEqual(ServiceState.stopped, status.state);
+}
+
+// -- ExitInfo tests --
+
+test "ExitInfo.isSuccess for zero exit code" {
+    const info: ExitInfo = .{ .exited = 0 };
+    try std.testing.expect(info.isSuccess());
+}
+
+test "ExitInfo.isSuccess false for non-zero exit code" {
+    const info: ExitInfo = .{ .exited = 1 };
+    try std.testing.expect(!info.isSuccess());
+}
+
+test "ExitInfo.isSuccess false for signal death" {
+    const info: ExitInfo = .{ .signaled = 9 };
+    try std.testing.expect(!info.isSuccess());
+}
+
+// -- evaluateRestart tests: restart=always --
+
+test "restart=always: restart on success" {
+    const svc = testService(.{ .restart = .always });
+    const status = ServiceStatus.init("test-svc");
+    const decision = evaluateRestart(&svc, &status, .{ .exited = 0 });
+    try std.testing.expectEqual(RestartDecision.restart, decision);
+}
+
+test "restart=always: restart on failure" {
+    const svc = testService(.{ .restart = .always });
+    const status = ServiceStatus.init("test-svc");
+    const decision = evaluateRestart(&svc, &status, .{ .exited = 1 });
+    try std.testing.expectEqual(RestartDecision.restart, decision);
+}
+
+test "restart=always: restart on signal death" {
+    const svc = testService(.{ .restart = .always });
+    const status = ServiceStatus.init("test-svc");
+    const decision = evaluateRestart(&svc, &status, .{ .signaled = 9 });
+    try std.testing.expectEqual(RestartDecision.restart, decision);
+}
+
+// -- evaluateRestart tests: restart=on-failure --
+
+test "restart=on-failure: stop on success" {
+    const svc = testService(.{ .restart = .@"on-failure" });
+    const status = ServiceStatus.init("test-svc");
+    const decision = evaluateRestart(&svc, &status, .{ .exited = 0 });
+    try std.testing.expectEqual(RestartDecision.stop, decision);
+}
+
+test "restart=on-failure: restart on non-zero exit" {
+    const svc = testService(.{ .restart = .@"on-failure" });
+    const status = ServiceStatus.init("test-svc");
+    const decision = evaluateRestart(&svc, &status, .{ .exited = 42 });
+    try std.testing.expectEqual(RestartDecision.restart, decision);
+}
+
+test "restart=on-failure: restart on signal death" {
+    const svc = testService(.{ .restart = .@"on-failure" });
+    const status = ServiceStatus.init("test-svc");
+    const decision = evaluateRestart(&svc, &status, .{ .signaled = 11 });
+    try std.testing.expectEqual(RestartDecision.restart, decision);
+}
+
+// -- evaluateRestart tests: restart=never --
+
+test "restart=never: stop on success" {
+    const svc = testService(.{});
+    const status = ServiceStatus.init("test-svc");
+    const decision = evaluateRestart(&svc, &status, .{ .exited = 0 });
+    try std.testing.expectEqual(RestartDecision.stop, decision);
+}
+
+test "restart=never: stop on failure" {
+    const svc = testService(.{});
+    const status = ServiceStatus.init("test-svc");
+    const decision = evaluateRestart(&svc, &status, .{ .exited = 1 });
+    try std.testing.expectEqual(RestartDecision.stop, decision);
+}
+
+// -- evaluateRestart tests: max_restarts --
+
+test "max_restarts: exhausted when limit reached" {
+    const svc = testService(.{ .restart = .always, .max_restarts = 3 });
+    var status = ServiceStatus.init("test-svc");
+    status.restart_count = 3;
+    const decision = evaluateRestart(&svc, &status, .{ .exited = 1 });
+    try std.testing.expectEqual(RestartDecision.exhausted, decision);
+}
+
+test "max_restarts: restart when under limit" {
+    const svc = testService(.{ .restart = .always, .max_restarts = 3 });
+    var status = ServiceStatus.init("test-svc");
+    status.restart_count = 2;
+    const decision = evaluateRestart(&svc, &status, .{ .exited = 1 });
+    try std.testing.expectEqual(RestartDecision.restart, decision);
+}
+
+test "max_restarts: zero means unlimited" {
+    const svc = testService(.{ .restart = .always, .max_restarts = 0 });
+    var status = ServiceStatus.init("test-svc");
+    status.restart_count = 999;
+    const decision = evaluateRestart(&svc, &status, .{ .exited = 1 });
+    try std.testing.expectEqual(RestartDecision.restart, decision);
+}
+
+// -- evaluateRestart tests: stopping state --
+
+test "stopping state: never restart regardless of policy" {
+    const svc = testService(.{ .restart = .always });
+    var status = ServiceStatus.init("test-svc");
+    status.recordStarted(1);
+    status.recordStopping();
+    const decision = evaluateRestart(&svc, &status, .{ .exited = 0 });
+    try std.testing.expectEqual(RestartDecision.stop, decision);
+}
+
+// -- evaluateRestart tests: oneshot --
+
+test "oneshot without interval: stop" {
+    const svc = testService(.{ .oneshot = true });
+    const status = ServiceStatus.init("test-svc");
+    const decision = evaluateRestart(&svc, &status, .{ .exited = 0 });
+    try std.testing.expectEqual(RestartDecision.stop, decision);
+}
+
+test "oneshot with interval: schedule" {
+    const svc = testService(.{ .oneshot = true, .interval = "30s" });
+    const status = ServiceStatus.init("test-svc");
+    const decision = evaluateRestart(&svc, &status, .{ .exited = 0 });
+    try std.testing.expectEqual(RestartDecision.schedule, decision);
+}
+
+test "oneshot with interval: schedule even on failure" {
+    const svc = testService(.{ .oneshot = true, .interval = "1m" });
+    const status = ServiceStatus.init("test-svc");
+    const decision = evaluateRestart(&svc, &status, .{ .exited = 1 });
+    try std.testing.expectEqual(RestartDecision.schedule, decision);
+}
+
+// -- ServiceState.label tests --
+
+test "ServiceState.label returns correct strings" {
+    try std.testing.expectEqualStrings("stopped", ServiceState.stopped.label());
+    try std.testing.expectEqualStrings("running", ServiceState.running.label());
+    try std.testing.expectEqualStrings("failed", ServiceState.failed.label());
 }

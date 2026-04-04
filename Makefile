@@ -1,65 +1,55 @@
-.PHONY: help build test test-interactive docker-build docker-test docker-clean clean
+BINARY_NAME = zei
+DOCKER_IMAGE = zei
+DOCKER_TAG = latest
+CONFIG_FILE = example/zei.yaml
 
-help:
-	@echo "Zei Init System - Make targets"
-	@echo ""
-	@echo "Local builds (requires Zig 0.15.2):"
-	@echo "  build              - Build the project locally"
-	@echo "  test               - Run local unit tests"
-	@echo "  clean              - Clean local build artifacts"
-	@echo ""
-	@echo "Docker builds and tests:"
-	@echo "  docker-build       - Build Docker image"
-	@echo "  docker-test        - Run automated Docker tests"
-	@echo "  docker-interactive - Run Docker container in interactive mode"
-	@echo "  docker-clean       - Remove Docker containers and images"
-	@echo ""
-	@echo "Combined:"
-	@echo "  all                - Build locally and run tests"
+.PHONY: build test clean docker-build docker-test docker-run docker-e2e docker-shell help
 
-# Local builds
 build:
 	zig build
 
 test:
-	zig build test
+	zig build test --summary all
 
 clean:
-	rm -rf zig-cache zig-out .zig-cache
+	rm -rf zig-out .zig-cache
 
-# Docker builds
 docker-build:
-	docker build -t zei:latest .
+	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
 
 docker-test: docker-build
-	@echo "Starting zei in Docker for 15 seconds..."
-	docker run --rm -d \
-		--name zei-test \
-		-v $(PWD)/test/services-test.yml:/config/services.yml:ro \
-		zei:latest --config /config/services.yml
-	@sleep 15
-	@echo ""
-	@echo "Logs from zei:"
-	@docker logs zei-test
-	@echo ""
-	@echo "Stopping container..."
-	@docker stop zei-test
+	docker build --target test -t $(DOCKER_IMAGE)-test .
+	docker run --rm $(DOCKER_IMAGE)-test
 
-docker-interactive: docker-build
+docker-run: docker-build
+	docker run --rm --name $(BINARY_NAME) \
+		$(DOCKER_IMAGE):$(DOCKER_TAG) -c /example/zei.yaml
+
+docker-run-detached: docker-build
+	docker run -d --name $(BINARY_NAME) \
+		$(DOCKER_IMAGE):$(DOCKER_TAG) -c /example/zei.yaml
+
+docker-e2e: docker-build
+	sh test/e2e.sh
+
+docker-shell: docker-build
 	docker run --rm -it \
-		--name zei-interactive \
-		-v $(PWD)/test/services-test.yml:/config/services.yml:ro \
-		zei:latest --config /config/services.yml
-
-docker-compose-up: docker-build
-	docker-compose up
-
-docker-compose-down:
-	docker-compose down
+		--entrypoint /bin/sh \
+		$(DOCKER_IMAGE):$(DOCKER_TAG)
 
 docker-clean:
-	docker rm -f zei-test zei-interactive 2>/dev/null || true
-	docker rmi zei:latest 2>/dev/null || true
+	docker rm -f $(BINARY_NAME) 2>/dev/null || true
 
-# Combined
-all: build test
+help:
+	@echo "Available targets:"
+	@echo "  build          - Build zei with zig build"
+	@echo "  test           - Run unit tests"
+	@echo "  clean          - Remove build artifacts"
+	@echo "  docker-build   - Build Docker image"
+	@echo "  docker-test    - Run unit tests in Docker (Linux)"
+	@echo "  docker-run     - Run zei as PID 1 in Docker"
+	@echo "  docker-run-detached - Run in background"
+	@echo "  docker-e2e     - Run end-to-end tests in Docker"
+	@echo "  docker-shell   - Open shell in Docker container"
+	@echo "  docker-clean   - Remove Docker container"
+	@echo "  help           - Show this help"

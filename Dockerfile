@@ -1,50 +1,64 @@
-# Dockerfile for building and testing zei init system
-FROM debian:bookworm-slim
+# Build stage: compile zei binary
+FROM alpine:3.21 AS builder
 
-# Install dependencies
-RUN apt-get update && apt-get install -y \
-    wget \
-    xz-utils \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache xz curl
 
-# Install Zig 0.15.2
-# Auto-detect architecture and download appropriate binary
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "x86_64" ]; then \
-        ZIG_ARCH="x86_64"; \
-    elif [ "$ARCH" = "aarch64" ]; then \
-        ZIG_ARCH="aarch64"; \
-    else \
-        echo "Unsupported architecture: $ARCH" && exit 1; \
-    fi && \
-    wget https://ziglang.org/download/0.15.2/zig-${ZIG_ARCH}-linux-0.15.2.tar.xz && \
-    tar -xf zig-${ZIG_ARCH}-linux-0.15.2.tar.xz && \
-    mv zig-${ZIG_ARCH}-linux-0.15.2 /usr/local/zig && \
-    ln -s /usr/local/zig/zig /usr/local/bin/zig && \
-    rm zig-${ZIG_ARCH}-linux-0.15.2.tar.xz
+ARG TARGETARCH
+RUN case "$TARGETARCH" in \
+      amd64) ZIG_ARCH=x86_64 ;; \
+      arm64) ZIG_ARCH=aarch64 ;; \
+      *) echo "Unsupported architecture: $TARGETARCH" && exit 1 ;; \
+    esac && \
+    curl -fsSL "https://ziglang.org/download/0.15.2/zig-${ZIG_ARCH}-linux-0.15.2.tar.xz" | \
+    tar -xJ -C /usr/local && \
+    ln -s /usr/local/zig-${ZIG_ARCH}-linux-0.15.2/zig /usr/local/bin/zig
 
-# Verify Zig installation
-RUN zig version
+ARG TARGETARCH
+WORKDIR /app
+COPY . .
+RUN case "$TARGETARCH" in \
+      amd64) ZIG_TARGET=x86_64-linux ;; \
+      arm64) ZIG_TARGET=aarch64-linux ;; \
+      *) ZIG_TARGET=native ;; \
+    esac && \
+    zig build -Dtarget=$ZIG_TARGET -Doptimize=ReleaseSafe
 
-# Create non-root user for running zei main process
-# The main process will drop to this user after initialization
-RUN groupadd -r zei && useradd -r -g zei zei
+# Build zombie_maker
+FROM alpine:3.21 AS zombie-builder
 
-# Set working directory
-WORKDIR /zei
+RUN apk add --no-cache gcc musl-dev make
+WORKDIR /app
+COPY example/zombie-maker/ .
+RUN make && chmod +x zombie_maker
 
-# Copy source files
-COPY build.zig build.zig.zon ./
-COPY src/ ./src/
+# Unit test stage (used by `docker build --target test`)
+FROM builder AS test
+CMD ["zig", "build", "test", "--summary", "all"]
 
-# Build the project
-RUN zig build
+# Runtime stage
+FROM alpine:3.21
 
-# The binary is now at /zei/zig-out/bin/zei
-# Make it accessible globally
-RUN ln -s /zei/zig-out/bin/zei /usr/local/bin/zei
+# Create non-root users and groups matching pei's test users
+RUN adduser -D -u 1000 appuser \
+    && adduser -D -u 1001 worker \
+    && adduser -D -u 1002 monitor \
+    && adduser -D -u 1003 zombie
 
-# Set entrypoint
-ENTRYPOINT ["/usr/local/bin/zei"]
-CMD ["--config", "/config/services.yml"]
+COPY --from=builder /app/zig-out/bin/zei /zei
+COPY --from=zombie-builder /app/zombie_maker /usr/local/bin/zombie_maker
+COPY example/signal-handler.sh /example/signal-handler.sh
+COPY example/json-logger.sh /example/json-logger.sh
+COPY example/ /example/
+COPY test/ /test/
+
+# setuid so zei can escalate privileges when run as appuser
+RUN chown root:root /zei && \
+    chmod u+s /zei && \
+    chown zombie:zombie /usr/local/bin/zombie_maker && \
+    chmod +x /example/signal-handler.sh && \
+    chmod +x /example/json-logger.sh && \
+    chmod +x /test/*.sh 2>/dev/null || true
+
+USER appuser
+
+ENTRYPOINT ["/zei"]

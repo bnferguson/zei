@@ -1,101 +1,150 @@
-# zei - Privilege Escalating Init
+# zei
 
-`zei` is an init (meant to be run as PID 1), that can run multiple processes not unlike `supervisord` or `systemd` but the difference is that it is designed to be run inside of a OCI container with default capabilities (so no adding a `--privledged` to your docker run). It also does not run as `root` but instead runs as a unprivledged user and relies on `setuid` to escalate to `root` only when tasks (or processes) require it.
+A small, fast init system for containers. zei runs as PID 1 inside Docker. It manages your services, reaps zombies, and shuts down cleanly.
 
-Each process that this init starts and manages can run as a different user. `zei` will escalate to `root` to change to this user to start the process or manage the process (including killing it, etc).
+## Why?
 
-Services/processes can write their logs to a tmpfs, but also stream them to stdout showing what service is generating the log.
+Most containers run one process. When you need more than one, problems show up fast:
 
-## Quick Start
+- Zombie processes pile up because nothing calls `waitpid`
+- SIGTERM to PID 1 never reaches your app
+- You can't run services as different users without extra tools
+- Graceful shutdown is harder than it should be
 
-### Building
+zei handles all of this in one static binary. No runtime, no extra files in the container.
 
-```bash
-# Fetch dependencies and build
+## Install
+
+zei is written in Zig 0.15.2. Build from source:
+
+```sh
 zig build
-
-# The binary will be in zig-out/bin/zei
 ```
 
-### Running
+This puts the binary at `zig-out/bin/zei`. Copy it into your container image.
 
-```bash
-# Run with example configuration
-./zig-out/bin/zei --config example/zei.yaml
+### Docker
 
-# Press Ctrl+C to exit
+The included `Dockerfile` builds zei for Linux and sets it as the entrypoint:
+
+```sh
+docker build -t my-app .
+docker run --rm my-app -c /path/to/zei.yaml
 ```
 
-### Testing
+## Config
 
-See [TESTING.md](TESTING.md) for comprehensive testing instructions.
-
-## Example Configuration
-
-A full, up-to-date, and commented example configuration is provided in [`example/zei.yaml`](example/zei.yaml). This file demonstrates the MVP features of `zei`:
+zei reads a YAML file. By default it looks at `/etc/zei/zei.yaml`, or you can pass `-c <path>`.
 
 ```yaml
+version: "1.0"
+
 services:
-  - name: echo-service
-    command: /bin/sh -c "while true; do echo 'Hello'; sleep 5; done"
+  web:
+    command: ["node", "server.js"]
+    user: appuser
+    group: appuser
     restart: always
-    user: nobody
+    max_restarts: 5
+    restart_delay: 2s
 
-  - name: worker
-    command: ["/usr/bin/python3", "-c", "print('Working...')"]
+  worker:
+    command: ["python", "worker.py"]
+    user: worker
+    group: worker
     restart: on-failure
-    user: nobody
-    working_dir: /tmp
+    max_restarts: 10
+    restart_delay: 5s
 
-  - name: oneoff
-    command: /bin/echo "This runs once"
-    restart: never
+  healthcheck:
+    command: ["sh", "-c", "curl -sf http://localhost:3000/health"]
+    user: monitor
+    group: monitor
+    oneshot: true
+    interval: 30s
+    depends_on: ["web"]
 ```
 
-Note: Make sure all specified users and groups exist in the container, and that the necessary directories and files are accessible to the respective users.
+### Service options
 
-## Key Features
+| Option | Default | What it does |
+|---|---|---|
+| `command` | (required) | The command to run, as a list |
+| `user` | `root` | Run the process as this user |
+| `group` | `root` | Run the process as this group |
+| `restart` | `never` | Restart policy: `always`, `on-failure`, or `never` |
+| `max_restarts` | `0` (unlimited) | Stop restarting after this many attempts |
+| `restart_delay` | `1s` | Wait this long before restarting (`5s`, `100ms`, `2m`, `1h`) |
+| `oneshot` | `false` | Run once and exit (combine with `interval` to repeat) |
+| `interval` | — | For oneshot services: wait this long, then run again |
+| `depends_on` | — | List of services that should start first |
+| `environment` | — | Map of environment variables |
+| `working_dir` | — | Working directory for the process |
+| `stdout` / `stderr` | — | Redirect output (eg `/dev/stdout`) |
+| `json_logs` | `false` | Parse child output as JSON log lines |
 
-1. **Service Management**:
-   - Each service can run as a different user
-   - Services can have different working directories
-   - Environment variables can be set per-service
-   - Services can depend on other services
+## CLI
 
-2. **Restart Policies**:
-   - `always`: Always restart the service if it dies
-   - `on-failure`: Only restart if the service exits with non-zero status
-   - `never`: Don't restart the service
-   - `oneshot`: Run the service once and don't keep it running
+When zei is running as PID 1, you can talk to it from inside the container:
 
-3. **Root Access**:
-   - Services can request root access via `requires_root: true`
-   - `zei` will handle privilege escalation only when needed
+```sh
+zei list                    # show all services and their status
+zei status web              # detailed status for one service
+zei restart worker          # restart a service
+zei signal web:HUP          # send a signal to a service
+```
 
-4. **Logging**:
-   - Service output can be redirected to files
-   - Environment variables for logging configuration
-   - Logs are streamed to stdout with service identification
+The CLI talks to the daemon over a Unix socket at `/tmp/zei.sock`. If the daemon isn't running, `list` and `status` fall back to reading the config file.
 
-5. **Scheduling**:
-   - Services can be scheduled to run at intervals
-   - Dependencies between services can be specified
+You can use signal names with or without the `SIG` prefix: `HUP`, `TERM`, `KILL`, `USR1`, `USR2`.
 
-## Reasoning
+## How it works
 
-The idea behind `zei` is that many times you need to run multiple services inside the same container but still want to have some user separation. This lets us run as multiple users while being non-root and conforming to CIS Docker standards (non-root, readonly filesystem, etc).
+zei starts as PID 1, blocks signals, loads your config, and spawns each service with the right user and group. Then it drops privileges and sits in a signal loop:
 
-## Project Status
+- **SIGCHLD**: reap exited children and decide whether to restart them
+- **SIGTERM / SIGINT / SIGQUIT**: start graceful shutdown (SIGTERM to all services, wait 30s, then SIGKILL)
+- **SIGHUP / SIGUSR1 / SIGUSR2**: forward to all managed services
 
-**MVP Complete!** 🎉
+### Privilege model
 
-zei is now functional and can:
-- ✅ Parse YAML configuration files
-- ✅ Spawn processes as different users (with setuid)
-- ✅ Monitor and restart services based on policy
-- ✅ Reap zombie processes
-- ✅ Handle graceful shutdown
-- ✅ Run as PID 1 in containers
+The zei binary uses the suid bit. This lets it start as a non-root user but still spawn services as different users. It goes to root only when it needs to spawn or signal a process, then drops back down. The real UID stays at root while the effective UID runs as your app user.
 
-See [TESTING.md](TESTING.md) for testing instructions and [DEVELOPMENT.md](DEVELOPMENT.md) for development status.
+> [!NOTE]
+> The privilege cycling only applies on Linux. On macOS (useful for running tests locally), zei skips the elevation/drop calls.
 
+## Development
+
+You need [Zig 0.15.2](https://ziglang.org/download/).
+
+```sh
+zig build                          # build
+zig build test --summary all       # run unit tests
+```
+
+Unit tests live next to their source in each `.zig` file. Some tests need a local `appuser` account and will skip if it's missing.
+
+### Docker tests
+
+Some tests only work on Linux because they need PID 1, privilege dropping, and zombie reaping. Run them through Docker:
+
+```sh
+make docker-test    # unit tests in a Linux container
+make docker-e2e     # end-to-end tests (starts containers, exercises the CLI)
+```
+
+The e2e suite (`test/e2e.sh`) builds the image, starts zei with different configs, and uses `docker exec` to check that things work.
+
+### Project layout
+
+```
+src/            Zig source (all modules, tests inline)
+example/        Sample configs and helper scripts for Docker testing
+test/           E2E test configs and the test runner script (e2e.sh)
+Dockerfile      Multi-stage build: builder, test, and runtime stages
+Makefile        Shortcuts for build, test, and Docker commands
+```
+
+## License
+
+[MIT](LICENSE)

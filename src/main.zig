@@ -1,384 +1,132 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const posix = std.posix;
-const linux = std.os.linux;
 
+const cli = @import("cli.zig");
 const config = @import("config.zig");
-const service_mod = @import("service.zig");
-const service_manager = @import("service_manager.zig");
-const process = @import("process.zig");
+const daemon = @import("daemon.zig");
+const ipc = @import("ipc.zig");
+const logger = @import("logger.zig");
 const privilege = @import("privilege.zig");
-const monitor = @import("monitor.zig");
-const reaper = @import("reaper.zig");
+const signal = @import("signal.zig");
 
-const ServiceManager = service_manager.ServiceManager;
-const Config = config.Config;
+const default_config_path = "/etc/zei/zei.yaml";
+const default_app_user = "appuser";
+const default_app_group = "appuser";
 
-const VERSION = "0.1.0-mvp";
+fn writeStderr(msg: []const u8) void {
+    _ = posix.write(posix.STDERR_FILENO, msg) catch {};
+}
 
-/// Global flag for shutdown
-var shutdown_requested: bool = false;
-
-pub fn main() !void {
-    // Set up allocator
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
+pub fn main() void {
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
     const allocator = gpa.allocator();
 
-    // Parse command line arguments
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    // Parse arguments.
+    var args_iter = std.process.args();
+    _ = args_iter.next(); // skip argv[0]
 
-    // Parse options
-    var config_path: ?[]const u8 = null;
-    var show_help = false;
-    var show_version = false;
+    var config_path: []const u8 = default_config_path;
+    var cli_args: std.ArrayListUnmanaged([]const u8) = .{};
 
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        const arg = args[i];
-        if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
-            show_help = true;
-        } else if (std.mem.eql(u8, arg, "-v") or std.mem.eql(u8, arg, "--version")) {
-            show_version = true;
-        } else if (std.mem.eql(u8, arg, "-c") or std.mem.eql(u8, arg, "--config")) {
-            if (i + 1 >= args.len) {
-                std.debug.print("Error: {s} requires a value\n", .{arg});
-                return error.MissingConfigPath;
-            }
-            i += 1;
-            config_path = args[i];
+    while (args_iter.next()) |arg| {
+        if (std.mem.eql(u8, arg, "-c")) {
+            config_path = args_iter.next() orelse {
+                writeStderr("error: -c requires a config path\n");
+                posix.exit(1);
+            };
+        } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-help")) {
+            cli_args.append(allocator, "help") catch posix.exit(1);
         } else {
-            std.debug.print("Error: Unknown argument '{s}'\n", .{arg});
-            return error.UnknownArgument;
+            cli_args.append(allocator, arg) catch posix.exit(1);
         }
     }
 
-    // Handle --version
-    if (show_version) {
-        std.debug.print("zei version {s}\n", .{VERSION});
-        return;
+    // Try CLI commands first. If a command is handled, we're done.
+    if (cli.run(allocator, cli_args.items, config_path)) return;
+
+    // No CLI command handled — check if we should run as daemon.
+    if (std.c.getpid() != 1) {
+        writeStderr(
+            "No zei daemon running. Available commands:\n" ++
+                "  zei list                    List all services\n" ++
+                "  zei status [service]        Show service status\n" ++
+                "  zei restart <service>       Restart a service\n" ++
+                "  zei signal <service:signal> Send signal to service\n" ++
+                "\nTo run as daemon: zei must be run as PID 1\n",
+        );
+        posix.exit(1);
     }
 
-    // Handle --help
-    if (show_help) {
-        printHelp();
-        return;
+    if (std.c.geteuid() != 0) {
+        writeStderr("error: zei must run as root\n");
+        posix.exit(1);
     }
 
-    // Require config file
-    if (config_path == null) {
-        std.debug.print("Error: Configuration file required\n\n", .{});
-        printHelp();
-        return error.NoConfigFile;
-    }
+    // -- Daemon mode --
+    const log = logger.Logger.initFromEnv();
+    log.info("zei starting as PID 1", .{});
 
-    // Run the init system
-    try runInitSystem(allocator, config_path.?);
-}
+    // Block signals before anything else.
+    signal.blockManagedSignals();
 
-fn runInitSystem(allocator: std.mem.Allocator, config_path: []const u8) !void {
-    // Print startup banner
-    std.debug.print("====================================\n", .{});
-    std.debug.print("zei v{s} - Zig Privilege Escalating Init\n", .{VERSION});
-    std.debug.print("====================================\n", .{});
-    std.debug.print("Configuration: {s}\n", .{config_path});
-    std.debug.print("PID: {d}\n", .{linux.getpid()});
-
-    // Check if running as PID 1
-    const pid = linux.getpid();
-    if (pid == 1) {
-        std.debug.print("Status: Running as PID 1 (init process)\n", .{});
-    } else {
-        std.debug.print("Status: Running as PID {d} (development mode)\n", .{pid});
-    }
-    std.debug.print("====================================\n\n", .{});
-
-    // Verify privilege escalation setup
-    privilege.verifySetuidConfiguration() catch |err| {
-        std.debug.print("Warning: Privilege configuration check failed: {}\n", .{err});
-    };
-
-    // Load configuration
-    std.debug.print("[init] Loading configuration from {s}...\n", .{config_path});
-    var cfg = config.parseConfigFile(allocator, config_path) catch |err| {
-        std.debug.print("Error: Failed to parse configuration: {}\n", .{err});
-        return err;
+    // Load config.
+    var cfg = config.load(allocator, config_path) catch |err| {
+        log.err("failed to load config: {s}", .{@errorName(err)});
+        posix.exit(1);
     };
     defer cfg.deinit();
-    std.debug.print("[init] Loaded {d} service(s)\n\n", .{cfg.services.len});
 
-    // Initialize service manager
-    std.debug.print("[init] Initializing service manager...\n", .{});
-    var manager = ServiceManager.init(allocator);
-    defer manager.deinit();
+    log.info("loaded {d} services from {s}", .{ cfg.services.len, config_path });
 
-    // Register all services
-    for (cfg.services) |service_config| {
-        try manager.registerService(service_config);
-        std.debug.print("[init] Registered service: {s}\n", .{service_config.name});
-    }
-    std.debug.print("\n", .{});
+    // Read app user/group from environment.
+    const app_user = posix.getenv("ZEI_APP_USER") orelse default_app_user;
+    const app_group = posix.getenv("ZEI_APP_GROUP") orelse default_app_group;
 
-    // Set up signal handling
-    std.debug.print("[init] Setting up signal handlers...\n", .{});
-    setupSignalHandlers();
-    reaper.setupReaper();
-    std.debug.print("[init] Signal handlers ready\n\n", .{});
-
-    // Start all services
-    std.debug.print("[init] Starting all services...\n", .{});
-    try startAllServices(allocator, &manager);
-    std.debug.print("[init] All services started\n\n", .{});
-
-    // Drop privileges for main process (but keep ability to re-escalate)
-    // Try to drop to "zei" user, fallback to "nobody" if not found
-    if (privilege.getCurrentEuid() == 0) {
-        std.debug.print("[init] Dropping privileges for main process...\n", .{});
-
-        const target_user = "zei";
-        const fallback_user = "nobody";
-
-        const drop_uid = privilege.lookupUser(allocator, target_user) catch |err| blk: {
-            std.debug.print("[init] User '{s}' not found ({any}), trying '{s}'...\n", .{ target_user, err, fallback_user });
-            break :blk privilege.lookupUser(allocator, fallback_user) catch |fallback_err| {
-                std.debug.print("[init] Warning: Could not drop privileges - user '{s}' not found: {any}\n", .{ fallback_user, fallback_err });
-                break :blk null;
-            };
-        };
-
-        if (drop_uid) |uid| {
-            // Try to get matching group, or use same GID as UID
-            const drop_gid = privilege.lookupGroup(allocator, target_user) catch uid;
-
-            privilege.dropPrivilegesTemporarily(uid, drop_gid) catch |err| {
-                std.debug.print("[init] Warning: Failed to drop privileges: {any}\n", .{err});
-            };
-        }
-    } else {
-        std.debug.print("[init] Not running as root, skipping privilege drop\n", .{});
-    }
-
-    // Enter main event loop
-    std.debug.print("[init] Entering main event loop\n", .{});
-    std.debug.print("[init] Press Ctrl+C to initiate shutdown\n\n", .{});
-
-    try mainEventLoop(allocator, &manager);
-
-    // Shutdown
-    std.debug.print("\n[init] Shutting down...\n", .{});
-    try shutdownAllServices(&manager);
-    std.debug.print("[init] Shutdown complete\n", .{});
-}
-
-fn startAllServices(allocator: std.mem.Allocator, manager: *ServiceManager) !void {
-    const services = try manager.getAllServices(allocator);
-    defer allocator.free(services);
-
-    for (services) |service| {
-        try startService(allocator, manager, service.config.name);
-    }
-}
-
-fn startService(allocator: std.mem.Allocator, manager: *ServiceManager, service_name: []const u8) !void {
-    const service = manager.getServiceByName(service_name) orelse return error.ServiceNotFound;
-
-    monitor.logLifecycleEvent(service_name, .starting);
-
-    // Update state to starting
-    try manager.updateState(service_name, .starting);
-
-    // Spawn the process
-    const result = process.spawnProcess(allocator, &service.config) catch |err| {
-        std.debug.print("[{s}] Failed to spawn: {}\n", .{ service_name, err });
-        try manager.markFailed(service_name);
-        monitor.logLifecycleEvent(service_name, .{ .failed = "spawn failed" });
-        return err;
+    // Initialize daemon.
+    var d = daemon.Daemon.init(allocator, &cfg, app_user, app_group) catch |err| {
+        log.err("daemon init failed: {s}", .{@errorName(err)});
+        posix.exit(1);
     };
+    defer d.deinit();
 
-    // Mark as started
-    try manager.markStarted(service_name, result.pid);
-    monitor.logLifecycleEvent(service_name, .{ .started = result.pid });
+    // Start IPC server.
+    var ipc_server = ipc.Server.init(log.scoped("ipc")) catch |err| {
+        log.err("IPC server failed to start: {s}", .{@errorName(err)});
+        posix.exit(1);
+    };
+    defer ipc_server.deinit();
 
-    // Note: pipes are left open for potential logging integration
-    // For MVP, we just close them
-    posix.close(result.pipes.stdout_read);
-    posix.close(result.pipes.stderr_read);
+    // Wire IPC server into daemon for polling.
+    d.ipc_server = &ipc_server;
+
+    // Start all services.
+    d.startAll();
+
+    // Drop privileges after starting services.
+    privilege.drop(app_user, app_group) catch |err| {
+        log.err("failed to drop privileges: {s}", .{@errorName(err)});
+        posix.exit(1);
+    };
+    log.info("dropped privileges to {s}:{s}", .{ app_user, app_group });
+
+    // Enter main loop.
+    log.info("entering signal loop", .{});
+    d.run();
+
+    log.info("zei shutdown complete", .{});
 }
 
-fn setupSignalHandlers() void {
-    // Block SIGTERM and SIGINT so we can handle them in the event loop
-    var mask = posix.sigemptyset();
-    posix.sigaddset(&mask, posix.SIG.TERM);
-    posix.sigaddset(&mask, posix.SIG.INT);
-    posix.sigaddset(&mask, posix.SIG.CHLD);
-
-    posix.sigprocmask(posix.SIG.BLOCK, &mask, null);
-}
-
-fn mainEventLoop(allocator: std.mem.Allocator, manager: *ServiceManager) !void {
-    var mask = posix.sigemptyset();
-    posix.sigaddset(&mask, posix.SIG.TERM);
-    posix.sigaddset(&mask, posix.SIG.INT);
-    posix.sigaddset(&mask, posix.SIG.CHLD);
-
-    std.debug.print("[init] Signal mask size: {} bytes, waiting for signals: TERM={}, INT={}, CHLD={}\n", .{
-        @sizeOf(@TypeOf(mask)),
-        posix.SIG.TERM,
-        posix.SIG.INT,
-        posix.SIG.CHLD,
-    });
-
-    while (!shutdown_requested) {
-        if (builtin.os.tag == .linux) {
-            // Linux: Use sigtimedwait via syscall
-            var timeout = linux.timespec{
-                .sec = 1,
-                .nsec = 0,
-            };
-
-            // rt_sigtimedwait(sigset_t *set, siginfo_t *info, timespec *timeout, size_t sigsetsize)
-            const sig = linux.syscall4(
-                .rt_sigtimedwait,
-                @intFromPtr(&mask),
-                @intFromPtr(@as(?*anyopaque, null)),
-                @intFromPtr(&timeout),
-                8, // Linux expects 8 bytes for sigset size (_NSIG/8 = 64/8)
-            );
-
-            // Check if syscall failed
-            if (@as(isize, @bitCast(sig)) < 0) {
-                const err = posix.errno(sig);
-                // EAGAIN means timeout (no signal received)
-                if (err != .AGAIN and err != .INTR) {
-                    std.debug.print("[init] sigtimedwait error: {}\n", .{err});
-                }
-                // Timeout or error - check for zombies anyway
-                try handleReaping(allocator, manager);
-                continue;
-            }
-
-            // Handle the signal (sig contains the signal number)
-            const sig_num: i32 = @intCast(sig);
-            std.debug.print("[init] Received signal: {}\n", .{sig_num});
-
-            if (sig_num == posix.SIG.TERM or sig_num == posix.SIG.INT) {
-                const sig_name = if (sig_num == posix.SIG.TERM) "SIGTERM" else "SIGINT";
-                std.debug.print("\n[init] Received {s}, initiating shutdown...\n", .{sig_name});
-                shutdown_requested = true;
-            } else if (sig_num == posix.SIG.CHLD) {
-                // Child process exited
-                std.debug.print("[init] Child process exited, reaping...\n", .{});
-                try handleReaping(allocator, manager);
-            }
-        } else {
-            // Non-Linux: Simple polling approach for development/testing
-            posix.nanosleep(1, 0);
-            try handleReaping(allocator, manager);
-
-            // Check for shutdown via global flag (would be set by signal handler)
-            if (shutdown_requested) {
-                break;
-            }
-        }
-    }
-}
-
-fn handleReaping(allocator: std.mem.Allocator, manager: *ServiceManager) !void {
-    var result = try reaper.reapProcesses(allocator, manager);
-    defer reaper.freeReapResult(allocator, &result);
-
-    // Restart services that need it
-    for (result.restarts_needed.items) |service_name| {
-        const service = manager.getServiceByName(service_name) orelse continue;
-
-        monitor.logLifecycleEvent(service_name, .{ .restarting = service.info.restart_count });
-
-        // Small delay before restart (100ms)
-        posix.nanosleep(0, 100_000_000);
-
-        // Restart the service
-        startService(allocator, manager, service_name) catch |err| {
-            std.debug.print("[{s}] Failed to restart: {}\n", .{ service_name, err });
-        };
-    }
-}
-
-fn shutdownAllServices(manager: *ServiceManager) !void {
-    const allocator = manager.allocator;
-    const services = try manager.getAllRunningServices(allocator);
-    defer allocator.free(services);
-
-    if (services.len == 0) {
-        std.debug.print("[init] No services to stop\n", .{});
-        return;
-    }
-
-    std.debug.print("[init] Stopping {d} running service(s)...\n", .{services.len});
-
-    // Send SIGTERM to all running services
-    for (services) |service| {
-        if (service.info.pid > 0) {
-            std.debug.print("[{s}] Sending SIGTERM to PID {d}\n", .{ service.config.name, service.info.pid });
-            _ = linux.kill(service.info.pid, posix.SIG.TERM);
-        }
-    }
-
-    // Wait for services to exit (with timeout)
-    const timeout_ms = 5000; // 5 seconds
-    const start = std.time.milliTimestamp();
-
-    while (true) {
-        const running_count = manager.countByState(.running);
-        if (running_count == 0) {
-            std.debug.print("[init] All services stopped gracefully\n", .{});
-            break;
-        }
-
-        const elapsed = std.time.milliTimestamp() - start;
-        if (elapsed > timeout_ms) {
-            std.debug.print("[init] Timeout waiting for services, sending SIGKILL...\n", .{});
-
-            // Send SIGKILL to remaining processes
-            const remaining = try manager.getAllRunningServices(allocator);
-            defer allocator.free(remaining);
-
-            for (remaining) |service| {
-                if (service.info.pid > 0) {
-                    std.debug.print("[{s}] Sending SIGKILL to PID {d}\n", .{ service.config.name, service.info.pid });
-                    _ = linux.kill(service.info.pid, posix.SIG.KILL);
-                }
-            }
-            break;
-        }
-
-        // Reap any exited processes
-        var result = try reaper.reapProcesses(allocator, manager);
-        reaper.freeReapResult(allocator, &result);
-
-        posix.nanosleep(0, 100_000_000);
-    }
-}
-
-fn printHelp() void {
-    std.debug.print(
-        \\Usage: zei [OPTIONS]
-        \\
-        \\A lightweight init system for containers with privilege escalation support.
-        \\
-        \\Options:
-        \\  -c, --config <path>   Path to configuration file (required)
-        \\  -h, --help            Show this help message
-        \\  -v, --version         Show version information
-        \\
-        \\Example:
-        \\  zei --config /etc/zei.yaml
-        \\
-        \\For more information, visit: https://github.com/bnferguson/zei
-        \\
-    , .{});
-}
-
-test "version constant" {
-    try std.testing.expect(VERSION.len > 0);
+comptime {
+    _ = @import("config.zig");
+    _ = @import("logger.zig");
+    _ = @import("user_lookup.zig");
+    _ = @import("privilege.zig");
+    _ = @import("process.zig");
+    _ = @import("monitor.zig");
+    _ = @import("reaper.zig");
+    _ = @import("signal.zig");
+    _ = @import("daemon.zig");
+    _ = @import("service_logger.zig");
+    _ = @import("ipc.zig");
+    _ = @import("cli.zig");
 }

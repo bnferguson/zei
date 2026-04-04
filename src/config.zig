@@ -1,5 +1,8 @@
 const std = @import("std");
-const toml = @import("toml");
+const Yaml = @import("yaml").Yaml;
+
+const config_size_max = 1024 * 1024; // 1 MiB
+const max_services = 256;
 
 const ns_per_ms: u64 = 1_000_000;
 const ns_per_s: u64 = 1_000_000_000;
@@ -14,15 +17,16 @@ pub const RestartPolicy = enum {
     never,
 };
 
+pub const EnvironmentMap = std.StringArrayHashMapUnmanaged([]const u8);
+
 pub const Service = struct {
     name: []const u8 = "",
-    command: []const []const u8,
+    command: []const []const u8 = &.{},
     user: []const u8 = "root",
     group: []const u8 = "root",
     working_dir: ?[]const u8 = null,
-    environment: ?toml.HashMap([]const u8) = null,
-    // zig-toml maps all TOML integers to i64; validated in load().
-    max_restarts: i64 = 0,
+    environment: ?EnvironmentMap = null,
+    max_restarts: u32 = 0,
     restart: RestartPolicy = .never,
     restart_delay: ?[]const u8 = null,
     depends_on: ?[]const []const u8 = null,
@@ -49,11 +53,6 @@ pub const Service = struct {
     }
 };
 
-const TomlConfig = struct {
-    version: []const u8 = "1.0",
-    services: toml.HashMap(Service),
-};
-
 pub const Config = struct {
     version: []const u8,
     services: []Service,
@@ -78,43 +77,133 @@ pub const LoadError = error{
     ParseFailed,
 };
 
-/// Load and parse a TOML configuration file into a Config.
+/// Load and parse a YAML configuration file into a Config.
 /// The caller must call Config.deinit() when done.
 pub fn load(allocator: std.mem.Allocator, path: []const u8) !Config {
-    var parser = toml.Parser(TomlConfig).init(allocator);
-    defer parser.deinit();
-
-    var result = parser.parseFile(path) catch |err| {
-        switch (err) {
-            error.FileNotFound => return LoadError.FileNotFound,
-            else => {
-                std.log.err("config parse failed: {s}", .{@errorName(err)});
-                return LoadError.ParseFailed;
-            },
-        }
+    const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return LoadError.FileNotFound,
+        else => return LoadError.ParseFailed,
     };
-    errdefer result.arena.deinit();
+    defer file.close();
 
-    const toml_config = result.value;
-    const arena_alloc = result.arena.allocator();
+    const source = file.readToEndAllocOptions(allocator, config_size_max, null, @enumFromInt(0), 0) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return LoadError.ParseFailed,
+    };
+    defer allocator.free(source);
 
-    // Build service slice from the HashMap, setting name from map key.
-    var entries: std.ArrayListUnmanaged(Service) = .{};
-    var it = toml_config.services.map.iterator();
-    while (it.next()) |entry| {
-        var svc = entry.value_ptr.*;
-        svc.name = entry.key_ptr.*;
-        try entries.append(arena_alloc, svc);
+    return loadFromSource(allocator, source);
+}
+
+/// Parse YAML source into a Config. Factored out for testability.
+fn loadFromSource(allocator: std.mem.Allocator, source: [:0]const u8) !Config {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    errdefer arena.deinit();
+    const alloc = arena.allocator();
+
+    var yaml: Yaml = .{ .source = source };
+    defer yaml.deinit(allocator);
+    yaml.load(allocator) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return LoadError.ParseFailed,
+    };
+
+    if (yaml.docs.items.len == 0) return LoadError.ParseFailed;
+    const root = yaml.docs.items[0].asMap() orelse return LoadError.ParseFailed;
+
+    // Version (optional, defaults to "1.0").
+    const version = if (root.get("version")) |v|
+        try alloc.dupe(u8, v.asScalar() orelse return LoadError.ParseFailed)
+    else
+        "1.0";
+
+    // Services map.
+    const services_map = (root.get("services") orelse return LoadError.ParseFailed).asMap() orelse
+        return LoadError.ParseFailed;
+
+    if (services_map.keys().len > max_services) return LoadError.ParseFailed;
+
+    var services: std.ArrayListUnmanaged(Service) = .{};
+    for (services_map.keys(), services_map.values()) |svc_name, svc_value| {
+        const svc_map = svc_value.asMap() orelse return LoadError.ParseFailed;
+        const svc = try parseService(alloc, svc_name, svc_map);
+        try services.append(alloc, svc);
     }
 
-    const services = try entries.toOwnedSlice(arena_alloc);
-    std.debug.assert(services.len == toml_config.services.map.count());
-
     return .{
-        .version = toml_config.version,
-        .services = services,
-        .arena = result.arena,
+        .version = version,
+        .services = try services.toOwnedSlice(alloc),
+        .arena = arena,
     };
+}
+
+// All allocations use the arena, so partial failure is cleaned up by the
+// caller's errdefer arena.deinit().
+fn parseService(alloc: std.mem.Allocator, name: []const u8, map: Yaml.Map) !Service {
+    return .{
+        .name = try alloc.dupe(u8, name),
+        .command = try parseStringList(alloc, map.get("command")) orelse return LoadError.ParseFailed,
+        .user = try dupeScalarOr(alloc, map.get("user"), "root"),
+        .group = try dupeScalarOr(alloc, map.get("group"), "root"),
+        .working_dir = try dupeScalar(alloc, map.get("working_dir")),
+        .environment = try parseEnvironment(alloc, map.get("environment")),
+        .max_restarts = parseUint(u32, map.get("max_restarts")) orelse 0,
+        .restart = parseRestartPolicy(map.get("restart")),
+        .restart_delay = try dupeScalar(alloc, map.get("restart_delay")),
+        .depends_on = try parseStringList(alloc, map.get("depends_on")),
+        .stdout = try dupeScalar(alloc, map.get("stdout")),
+        .stderr = try dupeScalar(alloc, map.get("stderr")),
+        .interval = try dupeScalar(alloc, map.get("interval")),
+        .oneshot = parseBool(map.get("oneshot")),
+        .json_logs = parseBool(map.get("json_logs")),
+    };
+}
+
+// -- YAML extraction helpers --
+
+fn dupeScalar(alloc: std.mem.Allocator, value: ?Yaml.Value) !?[]const u8 {
+    const v = value orelse return null;
+    const s = v.asScalar() orelse return null;
+    return try alloc.dupe(u8, s);
+}
+
+fn dupeScalarOr(alloc: std.mem.Allocator, value: ?Yaml.Value, default: []const u8) ![]const u8 {
+    return try dupeScalar(alloc, value) orelse default;
+}
+
+fn parseUint(comptime T: type, value: ?Yaml.Value) ?T {
+    const s = (value orelse return null).asScalar() orelse return null;
+    return std.fmt.parseInt(T, s, 10) catch null;
+}
+
+fn parseBool(value: ?Yaml.Value) bool {
+    const s = (value orelse return false).asScalar() orelse return false;
+    return std.mem.eql(u8, s, "true");
+}
+
+fn parseRestartPolicy(value: ?Yaml.Value) RestartPolicy {
+    const s = (value orelse return .never).asScalar() orelse return .never;
+    return std.meta.stringToEnum(RestartPolicy, s) orelse .never;
+}
+
+fn parseStringList(alloc: std.mem.Allocator, value: ?Yaml.Value) !?[]const []const u8 {
+    const list = (value orelse return null).asList() orelse return null;
+    const result = try alloc.alloc([]const u8, list.len);
+    for (list, 0..) |item, i| {
+        result[i] = try alloc.dupe(u8, item.asScalar() orelse return LoadError.ParseFailed);
+    }
+    return result;
+}
+
+fn parseEnvironment(alloc: std.mem.Allocator, value: ?Yaml.Value) !?EnvironmentMap {
+    const map = (value orelse return null).asMap() orelse return null;
+    var env: EnvironmentMap = .{};
+    for (map.keys(), map.values()) |key, val| {
+        const k = try alloc.dupe(u8, key);
+        const v = try alloc.dupe(u8, val.asScalar() orelse return LoadError.ParseFailed);
+        try env.put(alloc, k, v);
+    }
+    return env;
 }
 
 // -- Duration parsing --
@@ -124,11 +213,8 @@ pub fn load(allocator: std.mem.Allocator, path: []const u8) !Config {
 pub fn parseDuration(s: []const u8) ?u64 {
     if (s.len == 0) return null;
 
-    // Find where the numeric part ends.
     var i: usize = 0;
     while (i < s.len and (s[i] >= '0' and s[i] <= '9')) : (i += 1) {}
-    std.debug.assert(i <= s.len);
-
     if (i == 0) return null;
 
     const value = std.fmt.parseInt(u64, s[0..i], 10) catch return null;
@@ -172,64 +258,61 @@ test "parseDuration returns null on overflow" {
 }
 
 test "load parses valid config file" {
-    var config = try load(std.testing.allocator, "example/zei.toml");
-    defer config.deinit();
+    var cfg = try load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
 
-    try std.testing.expectEqualStrings("1.0", config.version);
-    try std.testing.expect(config.services.len > 0);
+    try std.testing.expectEqualStrings("1.0", cfg.version);
+    try std.testing.expect(cfg.services.len > 0);
 
-    const echo = config.getService("echo") orelse return error.TestUnexpectedResult;
+    const echo = cfg.getService("echo") orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("echo", echo.name);
     try std.testing.expectEqual(RestartPolicy.always, echo.restart);
-    try std.testing.expectEqual(@as(i64, 3), echo.max_restarts);
+    try std.testing.expectEqual(@as(u32, 3), echo.max_restarts);
     try std.testing.expectEqualStrings("appuser", echo.user);
     try std.testing.expect(echo.command.len > 0);
 }
 
 test "load parses oneshot service" {
-    var config = try load(std.testing.allocator, "example/zei.toml");
-    defer config.deinit();
+    var cfg = try load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
 
-    const healthcheck = config.getService("healthcheck") orelse return error.TestUnexpectedResult;
+    const healthcheck = cfg.getService("healthcheck") orelse return error.TestUnexpectedResult;
     try std.testing.expect(healthcheck.oneshot);
     try std.testing.expect(healthcheck.interval != null);
     try std.testing.expect(healthcheck.depends_on != null);
 }
 
 test "load parses environment variables" {
-    var config = try load(std.testing.allocator, "example/zei.toml");
-    defer config.deinit();
+    var cfg = try load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
 
-    const zombie = config.getService("zombie_maker") orelse return error.TestUnexpectedResult;
+    const zombie = cfg.getService("zombie_maker") orelse return error.TestUnexpectedResult;
     const env = zombie.environment orelse return error.TestUnexpectedResult;
-    const log_level = env.map.get("LOG_LEVEL") orelse return error.TestUnexpectedResult;
+    const log_level = env.get("LOG_LEVEL") orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("debug", log_level);
 }
 
 test "load parses json_logs flag" {
-    var config = try load(std.testing.allocator, "example/zei.toml");
-    defer config.deinit();
+    var cfg = try load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
 
-    const json_logger = config.getService("json_logger") orelse return error.TestUnexpectedResult;
+    const json_logger = cfg.getService("json_logger") orelse return error.TestUnexpectedResult;
     try std.testing.expect(json_logger.json_logs);
 }
 
 test "load returns error for missing file" {
-    const result = load(std.testing.allocator, "nonexistent.toml");
+    const result = load(std.testing.allocator, "nonexistent.yaml");
     try std.testing.expectError(LoadError.FileNotFound, result);
 }
 
 test "Service.restartDelayNs returns parsed delay" {
     const svc = Service{
-        .command = &.{},
         .restart_delay = "5s",
     };
     try std.testing.expectEqual(@as(u64, 5_000_000_000), svc.restartDelayNs());
 }
 
 test "Service.restartDelayNs returns default for no delay" {
-    const svc = Service{
-        .command = &.{},
-    };
+    const svc = Service{};
     try std.testing.expectEqual(default_restart_delay_ns, svc.restartDelayNs());
 }

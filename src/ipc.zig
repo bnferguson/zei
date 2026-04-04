@@ -417,7 +417,7 @@ test "writeResponse failure" {
 }
 
 test "writeResponse with service statuses" {
-    var cfg = try config.load(std.testing.allocator, "example/zei.toml");
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
     defer cfg.deinit();
 
     var d = try daemon.Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");

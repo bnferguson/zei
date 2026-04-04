@@ -424,9 +424,8 @@ pub const Daemon = struct {
         errdefer env.deinit();
 
         if (svc.environment) |env_config| {
-            var it = env_config.map.iterator();
-            while (it.next()) |entry| {
-                try env.put(entry.key_ptr.*, entry.value_ptr.*);
+            for (env_config.keys(), env_config.values()) |key, value| {
+                try env.put(key, value);
             }
         }
 
@@ -443,7 +442,7 @@ pub const Daemon = struct {
 // -- Tests --
 
 test "daemon init and deinit" {
-    var cfg = try config.load(std.testing.allocator, "example/zei.toml");
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
     defer cfg.deinit();
 
     var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
@@ -456,7 +455,7 @@ test "daemon init and deinit" {
 }
 
 test "daemon starts echo service" {
-    var cfg = try config.load(std.testing.allocator, "example/zei.toml");
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
     defer cfg.deinit();
 
     var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
@@ -486,7 +485,7 @@ test "daemon starts echo service" {
 }
 
 test "daemon findServiceByPid returns correct index" {
-    var cfg = try config.load(std.testing.allocator, "example/zei.toml");
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
     defer cfg.deinit();
 
     var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
@@ -499,7 +498,7 @@ test "daemon findServiceByPid returns correct index" {
 }
 
 test "daemon hasRunningServices" {
-    var cfg = try config.load(std.testing.allocator, "example/zei.toml");
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
     defer cfg.deinit();
 
     var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");

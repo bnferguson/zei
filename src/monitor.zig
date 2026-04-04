@@ -142,7 +142,7 @@ pub fn evaluateRestart(
 
     // Check max restart limit. max_restarts <= 0 means unlimited.
     if (svc.max_restarts > 0) {
-        if (status.restart_count >= @as(u32, @intCast(svc.max_restarts))) {
+        if (status.restart_count >= svc.max_restarts) {
             return .exhausted;
         }
     }
@@ -154,7 +154,7 @@ pub fn evaluateRestart(
 
 fn testService(overrides: struct {
     restart: config.RestartPolicy = .never,
-    max_restarts: i64 = 0,
+    max_restarts: u32 = 0,
     oneshot: bool = false,
     interval: ?[]const u8 = null,
 }) config.Service {

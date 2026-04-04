@@ -50,38 +50,38 @@ docker build -t "$IMAGE" . || { echo "Docker build failed"; exit 1; }
 # ---------- Test 1: Simple service ----------
 echo ""
 echo "=== Test: Simple service config ==="
-docker run -d --name "$CONTAINER" "$IMAGE" -c /test/simple.toml
+docker run -d --name "$CONTAINER" "$IMAGE" -c /test/simple.yaml
 sleep 3
 
 check_output "list shows echo service" "echo" \
-    docker exec "$CONTAINER" /zei -c /test/simple.toml list
+    docker exec "$CONTAINER" /zei -c /test/simple.yaml list
 
 check_output "status shows running" "running" \
-    docker exec "$CONTAINER" /zei -c /test/simple.toml status echo
+    docker exec "$CONTAINER" /zei -c /test/simple.yaml status echo
 
 docker rm -f "$CONTAINER" >/dev/null 2>&1
 
 # ---------- Test 2: Multi-service ----------
 echo ""
 echo "=== Test: Multi-service config ==="
-docker run -d --name "$CONTAINER" "$IMAGE" -c /test/multi.toml
+docker run -d --name "$CONTAINER" "$IMAGE" -c /test/multi.yaml
 sleep 4
 
 check_output "list shows echo service" "echo" \
-    docker exec "$CONTAINER" /zei -c /test/multi.toml list
+    docker exec "$CONTAINER" /zei -c /test/multi.yaml list
 
 check_output "list shows worker service" "worker" \
-    docker exec "$CONTAINER" /zei -c /test/multi.toml list
+    docker exec "$CONTAINER" /zei -c /test/multi.yaml list
 
 check_output "list shows monitor service" "monitor" \
-    docker exec "$CONTAINER" /zei -c /test/multi.toml list
+    docker exec "$CONTAINER" /zei -c /test/multi.yaml list
 
 docker rm -f "$CONTAINER" >/dev/null 2>&1
 
 # ---------- Test 3: Privilege drop ----------
 echo ""
 echo "=== Test: Privilege drop ==="
-docker run -d --name "$CONTAINER" "$IMAGE" -c /test/simple.toml
+docker run -d --name "$CONTAINER" "$IMAGE" -c /test/simple.yaml
 sleep 3
 
 # After drop(), real UID = 0 (parked for elevate), effective UID = appuser (1000).
@@ -99,34 +99,34 @@ docker rm -f "$CONTAINER" >/dev/null 2>&1
 # ---------- Test 4: Restart behavior ----------
 echo ""
 echo "=== Test: Restart behavior ==="
-docker run -d --name "$CONTAINER" "$IMAGE" -c /test/restart.toml
+docker run -d --name "$CONTAINER" "$IMAGE" -c /test/restart.yaml
 sleep 8
 
 check_output "crasher restarts on failure" "crasher" \
-    docker exec "$CONTAINER" /zei -c /test/restart.toml list
+    docker exec "$CONTAINER" /zei -c /test/restart.yaml list
 
 docker rm -f "$CONTAINER" >/dev/null 2>&1
 
 # ---------- Test 5: IPC restart command ----------
 echo ""
 echo "=== Test: IPC restart command ==="
-docker run -d --name "$CONTAINER" "$IMAGE" -c /test/simple.toml
+docker run -d --name "$CONTAINER" "$IMAGE" -c /test/simple.yaml
 sleep 3
 
 check_output "restart command succeeds" "restart" \
-    docker exec "$CONTAINER" /zei -c /test/simple.toml restart echo
+    docker exec "$CONTAINER" /zei -c /test/simple.yaml restart echo
 
 sleep 3
 
 check_output "service still running after restart" "running" \
-    docker exec "$CONTAINER" /zei -c /test/simple.toml status echo
+    docker exec "$CONTAINER" /zei -c /test/simple.yaml status echo
 
 docker rm -f "$CONTAINER" >/dev/null 2>&1
 
 # ---------- Test 6: Graceful shutdown ----------
 echo ""
 echo "=== Test: Graceful shutdown ==="
-docker run -d --name "$CONTAINER" "$IMAGE" -c /test/simple.toml
+docker run -d --name "$CONTAINER" "$IMAGE" -c /test/simple.yaml
 sleep 3
 
 # Give 35 seconds — the daemon's internal shutdown timeout is 30s.
@@ -144,7 +144,7 @@ docker rm -f "$CONTAINER" >/dev/null 2>&1
 # ---------- Test 7: Zombie reaping ----------
 echo ""
 echo "=== Test: Zombie reaping ==="
-docker run -d --name "$CONTAINER" "$IMAGE" -c /example/zei.toml
+docker run -d --name "$CONTAINER" "$IMAGE" -c /example/zei.yaml
 sleep 15
 
 # Count zombie processes (state Z in /proc/*/stat). Exclude self.

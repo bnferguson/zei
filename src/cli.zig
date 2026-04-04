@@ -377,7 +377,7 @@ fn printUsage() void {
         \\  help                Show this help
         \\
         \\Options:
-        \\  -c <path>           Config file path (default: /etc/zei/zei.toml)
+        \\  -c <path>           Config file path (default: /etc/zei/zei.yaml)
         \\
         \\When run as PID 1, zei starts in daemon mode.
         \\Otherwise, it operates as a CLI client.

@@ -3,7 +3,7 @@ services:
   zei:
     build: .
     init: false
-    command: ["-c", "/example/zei.toml"]
+    command: ["-c", "/example/zei.yaml"]
     stop_signal: SIGTERM
     stop_grace_period: 35s
 

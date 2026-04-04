@@ -9,7 +9,7 @@ const logger = @import("logger.zig");
 const privilege = @import("privilege.zig");
 const signal = @import("signal.zig");
 
-const default_config_path = "/etc/zei/zei.toml";
+const default_config_path = "/etc/zei/zei.yaml";
 const default_app_user = "appuser";
 const default_app_group = "appuser";
 

@@ -1,7 +1,7 @@
 BINARY_NAME = zei
 DOCKER_IMAGE = zei
 DOCKER_TAG = latest
-CONFIG_FILE = example/zei.toml
+CONFIG_FILE = example/zei.yaml
 
 .PHONY: build test clean docker-build docker-test docker-run docker-e2e docker-shell help
 
@@ -23,11 +23,11 @@ docker-test: docker-build
 
 docker-run: docker-build
 	docker run --rm --name $(BINARY_NAME) \
-		$(DOCKER_IMAGE):$(DOCKER_TAG) -c /example/zei.toml
+		$(DOCKER_IMAGE):$(DOCKER_TAG) -c /example/zei.yaml
 
 docker-run-detached: docker-build
 	docker run -d --name $(BINARY_NAME) \
-		$(DOCKER_IMAGE):$(DOCKER_TAG) -c /example/zei.toml
+		$(DOCKER_IMAGE):$(DOCKER_TAG) -c /example/zei.yaml
 
 docker-e2e: docker-build
 	sh test/e2e.sh

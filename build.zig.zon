@@ -3,9 +3,9 @@
     .version = "0.1.0",
     .fingerprint = 0x8ac3728a3ff3cb17,
     .dependencies = .{
-        .toml = .{
-            .url = "git+https://github.com/sam701/zig-toml#zig-0.15",
-            .hash = "toml-0.3.0-bV14BfV7AQD8DkuQI7skP8ekQTaBYKTO0MY_35Cw_EXo",
+        .yaml = .{
+            .url = "git+https://github.com/kubkon/zig-yaml#0.2.0",
+            .hash = "zig_yaml-0.2.0-C1161pmrAgC_rL9WzjvgNg7HnmyAMwHsG3Sre0F4haPI",
         },
     },
     .paths = .{

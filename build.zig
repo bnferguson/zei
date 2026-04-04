@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const toml_dep = b.dependency("toml", .{
+    const yaml_dep = b.dependency("yaml", .{
         .target = target,
         .optimize = optimize,
     });
@@ -17,7 +17,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .link_libc = true,
             .imports = &.{
-                .{ .name = "toml", .module = toml_dep.module("toml") },
+                .{ .name = "yaml", .module = yaml_dep.module("yaml") },
             },
         }),
     });
@@ -39,7 +39,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .link_libc = true,
             .imports = &.{
-                .{ .name = "toml", .module = toml_dep.module("toml") },
+                .{ .name = "yaml", .module = yaml_dep.module("yaml") },
             },
         }),
     });

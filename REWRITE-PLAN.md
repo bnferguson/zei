@@ -86,12 +86,12 @@ Each session is designed to produce a compilable, testable increment. Sessions b
 - [x] Verify: `zig build test` passes
 
 ### Session 6: Zombie Reaper
-- [ ] Implement reaper.zig: `reapChildren()` using waitpid with WNOHANG
-- [ ] Parse exit status (normal exit vs signal death)
-- [ ] Return list of reaped PIDs with exit info
-- [ ] Integration with service manager (identify managed vs orphaned children)
-- [ ] Write unit tests (fork+exit a child, verify reaping)
-- [ ] Verify: `zig build test` passes
+- [x] Implement reaper.zig: `reapChildren()` using waitpid with WNOHANG
+- [x] Parse exit status (normal exit vs signal death)
+- [x] Return list of reaped PIDs with exit info
+- [x] Integration with service manager (identify managed vs orphaned children)
+- [x] Write unit tests (fork+exit a child, verify reaping)
+- [x] Verify: `zig build test` passes
 
 ### Session 7: Signal Handling
 - [ ] Set up signal mask: block SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2, SIGCHLD, SIGPIPE

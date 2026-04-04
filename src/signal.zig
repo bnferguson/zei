@@ -62,6 +62,7 @@ pub fn blockManagedSignals() void {
     posix.sigprocmask(posix.SIG.BLOCK, &mask, null);
 }
 
+
 /// Restore the default signal mask (unblock managed signals).
 /// Useful for child processes after fork, before exec.
 pub fn unblockManagedSignals() void {
@@ -88,26 +89,22 @@ pub fn waitForSignal() ?u8 {
     }
 }
 
-/// Linux implementation using rt_sigtimedwait syscall.
+/// Linux implementation using libc sigtimedwait.
 fn waitForSignalLinux(mask: *const posix.sigset_t) ?u8 {
-    const linux = std.os.linux;
-    var timeout = linux.timespec{ .sec = 1, .nsec = 0 };
+    var timeout = std.c.timespec{ .sec = 1, .nsec = 0 };
 
-    const rc = linux.syscall4(
-        .rt_sigtimedwait,
-        @intFromPtr(mask),
-        @intFromPtr(@as(?*anyopaque, null)),
-        @intFromPtr(&timeout),
-        @sizeOf(posix.sigset_t),
-    );
-
-    const signed: isize = @bitCast(rc);
-    if (signed > 0) {
-        return @intCast(signed);
+    const sig = c_signal.sigtimedwait(@ptrCast(mask), null, @ptrCast(&timeout));
+    if (sig > 0) {
+        return @intCast(sig);
     }
-    // Timeout or error — caller will loop.
+    // Timeout (EAGAIN) or error — caller will loop.
     return null;
 }
+
+const c_signal = if (builtin.os.tag == .linux) @cImport({
+    @cInclude("signal.h");
+    @cInclude("time.h");
+}) else struct {};
 
 /// C signal functions, only needed on non-Linux for the polling fallback.
 const c = if (builtin.os.tag == .linux) struct {} else @cImport({

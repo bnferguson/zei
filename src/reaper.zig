@@ -44,7 +44,7 @@ pub fn reapChildren(buf: []ReapResult) usize {
 }
 
 /// Parse a raw wait status into an ExitInfo.
-fn parseWaitStatus(status: u32) monitor.ExitInfo {
+pub fn parseWaitStatus(status: u32) monitor.ExitInfo {
     if (posix.W.IFEXITED(status)) {
         return .{ .exited = posix.W.EXITSTATUS(status) };
     }

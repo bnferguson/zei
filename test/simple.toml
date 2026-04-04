@@ -1,0 +1,9 @@
+version = "1.0"
+
+[services.echo]
+command = ["sh", "-c", "trap 'exit 0' TERM; while true; do echo 'hello from echo'; sleep 2 & wait; done"]
+user = "appuser"
+group = "appuser"
+restart = "always"
+max_restarts = 3
+restart_delay = "1s"

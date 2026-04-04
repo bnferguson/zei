@@ -1,0 +1,25 @@
+version = "1.0"
+
+[services.echo]
+command = ["sh", "-c", "trap 'exit 0' TERM; while true; do echo 'echo running'; sleep 2 & wait; done"]
+user = "appuser"
+group = "appuser"
+restart = "always"
+max_restarts = 3
+restart_delay = "1s"
+
+[services.worker]
+command = ["sh", "-c", "trap 'exit 0' TERM; while true; do echo 'worker running'; sleep 3 & wait; done"]
+user = "worker"
+group = "worker"
+restart = "on-failure"
+max_restarts = 5
+restart_delay = "1s"
+
+[services.monitor]
+command = ["sh", "-c", "echo 'health check'; sleep 1"]
+user = "monitor"
+group = "monitor"
+interval = "10s"
+oneshot = true
+depends_on = ["echo", "worker"]

@@ -162,15 +162,15 @@ Each session is designed to produce a compilable, testable increment. Sessions b
 - [x] Verify full build: `zig build`
 
 ### Session 13: Docker + System Testing
-- [ ] Write Dockerfile (Alpine, Zig 0.15.2, create test users)
-- [ ] Write docker-compose.yml
-- [ ] Write Makefile (build, test, docker-build, docker-run, run-local, run-dev)
-- [ ] Create test configs (simple echo, multi-service, restart test)
-- [ ] End-to-end test: build in Docker, run as PID 1, verify via CLI
-- [ ] Test privilege escalation/dropping
-- [ ] Test zombie reaping
-- [ ] Test graceful shutdown (SIGTERM -> wait -> SIGKILL)
-- [ ] Test IPC commands from CLI
+- [x] Write Dockerfile (Alpine, Zig 0.15.2, create test users)
+- [x] Write docker-compose.yml
+- [x] Write Makefile (build, test, docker-build, docker-run, run-local, run-dev)
+- [x] Create test configs (simple echo, multi-service, restart test)
+- [x] End-to-end test: build in Docker, run as PID 1, verify via CLI
+- [x] Test privilege escalation/dropping
+- [x] Test zombie reaping
+- [x] Test graceful shutdown (SIGTERM -> wait -> SIGKILL)
+- [x] Test IPC commands from CLI
 
 ### Session 14: Polish + README
 - [ ] Review all modules against idiomatic Zig standards

@@ -96,6 +96,9 @@ pub fn main() void {
     };
     defer ipc_server.deinit();
 
+    // Wire IPC server into daemon for polling.
+    d.ipc_server = &ipc_server;
+
     // Start all services.
     d.startAll();
 

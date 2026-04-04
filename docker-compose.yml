@@ -1,0 +1,15 @@
+services:
+  # Run zei as PID 1 with the full example config
+  zei:
+    build: .
+    init: false
+    command: ["-c", "/example/zei.toml"]
+    stop_signal: SIGTERM
+    stop_grace_period: 35s
+
+  # Run unit tests inside Docker (Linux-only tests)
+  test:
+    build:
+      context: .
+      target: test
+    profiles: ["test"]

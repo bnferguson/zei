@@ -3,6 +3,7 @@ const posix = std.posix;
 const builtin = @import("builtin");
 
 const config = @import("config.zig");
+const ipc = @import("ipc.zig");
 const logger = @import("logger.zig");
 const monitor = @import("monitor.zig");
 const privilege = @import("privilege.zig");
@@ -19,6 +20,7 @@ pub const Daemon = struct {
     app_user: []const u8,
     app_group: []const u8,
     allocator: std.mem.Allocator,
+    ipc_server: ?*ipc.Server,
     shutting_down: bool,
 
     pub fn init(
@@ -37,6 +39,7 @@ pub const Daemon = struct {
         }
 
         const spawns = try allocator.alloc(?process.SpawnResult, n);
+        errdefer allocator.free(spawns);
         @memset(spawns, null);
 
         return .{
@@ -47,6 +50,7 @@ pub const Daemon = struct {
             .app_user = app_user,
             .app_group = app_group,
             .allocator = allocator,
+            .ipc_server = null,
             .shutting_down = false,
         };
     }
@@ -117,7 +121,8 @@ pub const Daemon = struct {
 
     /// Restart a service after evaluating the restart decision.
     /// Handles privilege elevation/dropping for credential-based spawning.
-    fn restartService(self: *Daemon, idx: usize) void {
+    pub fn restartService(self: *Daemon, idx: usize) void {
+        std.debug.assert(idx < self.cfg.services.len);
         const svc = &self.cfg.services[idx];
         const svc_log = self.log.forService(svc.name);
 
@@ -130,6 +135,9 @@ pub const Daemon = struct {
             };
         }
 
+        // If the service is currently running, stop it first.
+        self.stopService(idx);
+
         self.startService(idx);
 
         if (builtin.os.tag == .linux) {
@@ -137,6 +145,65 @@ pub const Daemon = struct {
                 svc_log.err("drop failed after restart: {s}", .{@errorName(err)});
             };
         }
+    }
+
+    /// Stop a running service by sending SIGTERM and waiting for exit.
+    fn stopService(self: *Daemon, idx: usize) void {
+        const status = &self.statuses[idx];
+        if (status.state != .running) return;
+
+        const pid = status.pid orelse return;
+        const svc_log = self.log.forService(self.cfg.services[idx].name);
+
+        posix.kill(pid, posix.SIG.TERM) catch |err| {
+            svc_log.err("SIGTERM failed: {s}", .{@errorName(err)});
+            return;
+        };
+        status.recordStopping();
+
+        // Wait up to 5 seconds for the specific PID (not reapAndProcess,
+        // which would trigger auto-restart logic and re-enter restartService).
+        var waited: u32 = 0;
+        while (waited < 50) : (waited += 1) {
+            var wait_status: c_int = 0;
+            const rc = std.c.waitpid(pid, &wait_status, std.c.W.NOHANG);
+            if (rc > 0) {
+                // Child exited — update status directly.
+                if (self.spawns[idx]) |*s| {
+                    s.deinit();
+                    self.spawns[idx] = null;
+                }
+                status.recordExited(reaper.parseWaitStatus(@bitCast(wait_status)));
+                return;
+            }
+            posix.nanosleep(0, 100_000_000); // 100ms
+        }
+
+        // Force kill if still running.
+        svc_log.warn("SIGTERM timeout, sending SIGKILL", .{});
+        posix.kill(pid, posix.SIG.KILL) catch |err| {
+            if (err != error.ProcessNotFound) {
+                svc_log.err("SIGKILL failed: {s}", .{@errorName(err)});
+            }
+            return;
+        };
+
+        // Wait up to 2 seconds for exit after SIGKILL (bounded, not blocking).
+        var kill_waited: u32 = 0;
+        while (kill_waited < 20) : (kill_waited += 1) {
+            var kill_status: c_int = 0;
+            const rc = std.c.waitpid(pid, &kill_status, std.c.W.NOHANG);
+            if (rc > 0) {
+                if (self.spawns[idx]) |*s| {
+                    s.deinit();
+                    self.spawns[idx] = null;
+                }
+                status.recordExited(reaper.parseWaitStatus(@bitCast(kill_status)));
+                return;
+            }
+            posix.nanosleep(0, 100_000_000); // 100ms
+        }
+        svc_log.err("process pid={d} did not exit after SIGKILL", .{pid});
     }
 
     // -- Reaping and restart evaluation --
@@ -217,6 +284,11 @@ pub const Daemon = struct {
     /// Main daemon loop. Blocks on signals and dispatches actions.
     pub fn run(self: *Daemon) void {
         while (!self.shutting_down) {
+            // Poll IPC for pending client connections.
+            if (self.ipc_server) |srv| {
+                while (srv.tryAccept(self)) {}
+            }
+
             const sig = signal.waitForSignal() orelse {
                 // Timeout — do a periodic reap in case we missed SIGCHLD.
                 self.reapAndProcess();

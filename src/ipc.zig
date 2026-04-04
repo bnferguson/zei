@@ -162,6 +162,12 @@ pub const Server = struct {
     fn handleConnection(self: *Server, conn: std.net.Server.Connection, d: *daemon.Daemon) void {
         defer conn.stream.close();
 
+        // The accepted socket inherits non-blocking from the listener.
+        // Switch to blocking for the request/response exchange.
+        const nonblock_bit: usize = 1 << @bitOffsetOf(posix.O, "NONBLOCK");
+        const fl_flags = posix.fcntl(conn.stream.handle, posix.F.GETFL, 0) catch return;
+        _ = posix.fcntl(conn.stream.handle, posix.F.SETFL, fl_flags & ~nonblock_bit) catch return;
+
         // Read request (max 4KB).
         var buf: [4096]u8 = undefined;
         const n = posix.read(conn.stream.handle, &buf) catch |err| {
@@ -174,14 +180,15 @@ pub const Server = struct {
     }
 
     fn dispatchRequest(self: *Server, data: []const u8, fd: posix.fd_t, d: *daemon.Daemon) void {
-        // Parse the JSON request.
-        const req = std.json.parseFromSlice(Request, std.heap.page_allocator, data, .{
+        // Parse the JSON request using stack memory (requests are bounded at 4KB).
+        var parse_buf: [4096]u8 = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&parse_buf);
+        const req = std.json.parseFromSlice(Request, fba.allocator(), data, .{
             .ignore_unknown_fields = true,
         }) catch {
             self.writeError(fd, "invalid request format");
             return;
         };
-        defer req.deinit();
 
         const cmd = Command.parse(req.value.command) orelse {
             self.writeError(fd, "unknown command");
@@ -245,9 +252,9 @@ pub const Server = struct {
             return;
         };
 
-        // Restart the service.
+        // Restart the service (elevates privileges on Linux).
         self.log.info("IPC restart requested for {s}", .{name});
-        d.startService(idx);
+        d.restartService(idx);
 
         writeResponse(fbs.writer(), true, "restart requested", null, null) catch return;
         _ = posix.write(fd, fbs.getWritten()) catch {};

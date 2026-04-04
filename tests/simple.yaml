@@ -1,5 +1,0 @@
-# Simple test configuration with one service
-services:
-  - name: hello
-    command: /bin/echo "Hello from zei!"
-    restart: never

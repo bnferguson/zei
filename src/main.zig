@@ -7,6 +7,7 @@ const process = @import("process.zig");
 const monitor = @import("monitor.zig");
 const reaper = @import("reaper.zig");
 const signal = @import("signal.zig");
+const daemon = @import("daemon.zig");
 
 pub fn main() !void {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
@@ -20,6 +21,7 @@ pub fn main() !void {
     _ = monitor;
     _ = reaper;
     _ = signal;
+    _ = daemon;
 }
 
 comptime {
@@ -31,4 +33,5 @@ comptime {
     _ = @import("monitor.zig");
     _ = @import("reaper.zig");
     _ = @import("signal.zig");
+    _ = @import("daemon.zig");
 }

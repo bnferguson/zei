@@ -60,10 +60,24 @@ pub const Logger = struct {
         const level_str: ?[]const u8 = if (std.posix.getenv("ZEI_LOG_LEVEL")) |v| v else null;
         const format_str: ?[]const u8 = if (std.posix.getenv("ZEI_LOG_FORMAT")) |v| v else null;
         return init(
-            std.io.getStdErr().writer().any(),
+            stderrWriter(),
             Level.parse(level_str),
             Format.parse(format_str),
         );
+    }
+
+    /// An AnyWriter that writes to stderr via the POSIX fd directly.
+    /// Avoids the std.fs.File.writer() API which requires a buffer in 0.15.2.
+    fn stderrWriter() std.io.AnyWriter {
+        return .{
+            .context = @ptrFromInt(std.posix.STDERR_FILENO),
+            .writeFn = &stderrWriteFn,
+        };
+    }
+
+    fn stderrWriteFn(context: *const anyopaque, bytes: []const u8) anyerror!usize {
+        const fd: std.posix.fd_t = @intCast(@intFromPtr(context));
+        return std.posix.write(fd, bytes);
     }
 
     /// Return a new logger scoped to a component.

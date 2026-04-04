@@ -85,6 +85,12 @@ pub const ServiceStatus = struct {
         self.state = .failed;
     }
 
+    /// Mark the service as failed during startup (e.g., credential lookup or spawn error).
+    pub fn recordStartFailed(self: *ServiceStatus) void {
+        std.debug.assert(self.state == .starting);
+        self.state = .failed;
+    }
+
     /// Elapsed seconds since the service started, or null if not started.
     pub fn uptime(self: *const ServiceStatus) ?i64 {
         const started = self.started_at orelse return null;

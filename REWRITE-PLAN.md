@@ -105,15 +105,16 @@ Each session is designed to produce a compilable, testable increment. Sessions b
 - [x] Verify: `zig build test` passes
 
 ### Session 8: Daemon Core (Tying It Together)
-- [ ] Implement daemon.zig: `Daemon` struct holding config, service state maps, restart channel
-- [ ] `start()`: launch all services, start reaper, drop privileges, enter signal loop
-- [ ] `startService()`: spawn process, set up monitoring
-- [ ] `serviceManager()`: process restart requests (elevate -> spawn -> drop)
-- [ ] `shutdownServices()`: SIGTERM all -> 30s timeout -> SIGKILL
-- [ ] `forwardSignalToServices()`: elevate -> signal each -> drop
-- [ ] Thread safety: mutex around service maps
-- [ ] Write integration test: start daemon with echo service, verify it runs
-- [ ] Verify: `zig build test` passes
+- [x] Implement daemon.zig: `Daemon` struct holding config, service statuses, spawn results
+- [x] `startAll()` / `startService()`: lookup creds, build env, spawn, track status
+- [x] `reapAndProcess()`: reap zombies, match to services, evaluate restart decisions
+- [x] `restartService()`: elevate -> spawn -> drop (Linux only)
+- [x] `shutdownServices()`: SIGTERM all -> 30s timeout -> SIGKILL
+- [x] `forwardSignalToServices()`: elevate -> signal each -> drop
+- [x] `run()`: signal loop dispatching shutdown/forward/reap actions
+- [x] Single-threaded design (no mutex needed — signal loop is synchronous)
+- [x] Write tests: init/deinit, start echo service, findServiceByPid, hasRunningServices
+- [x] Verify: `zig build test` passes
 
 ### Session 9: Service Output Capture + JSON Log Parsing
 - [ ] Implement service_logger.zig: read from stdout/stderr pipes line-by-line

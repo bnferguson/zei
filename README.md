@@ -147,4 +147,4 @@ Makefile        Shortcuts for build, test, and Docker commands
 
 ## License
 
-TBD
+[MIT](LICENSE)

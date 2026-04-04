@@ -94,15 +94,15 @@ Each session is designed to produce a compilable, testable increment. Sessions b
 - [x] Verify: `zig build test` passes
 
 ### Session 7: Signal Handling
-- [ ] Set up signal mask: block SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2, SIGCHLD, SIGPIPE
-- [ ] Implement signal dispatch:
+- [x] Set up signal mask: block SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2, SIGCHLD, SIGPIPE
+- [x] Implement signal dispatch:
   - SIGTERM/SIGINT/SIGQUIT -> initiate graceful shutdown
   - SIGHUP/SIGUSR1/SIGUSR2 -> forward to all services
   - SIGCHLD -> trigger reaper
   - SIGPIPE -> ignore
-- [ ] Use `sigtimedwait` on Linux, fallback polling on macOS
-- [ ] Write tests for signal mask setup
-- [ ] Verify: `zig build test` passes
+- [x] Use `sigtimedwait` on Linux, fallback polling on macOS
+- [x] Write tests for signal mask setup
+- [x] Verify: `zig build test` passes
 
 ### Session 8: Daemon Core (Tying It Together)
 - [ ] Implement daemon.zig: `Daemon` struct holding config, service state maps, restart channel

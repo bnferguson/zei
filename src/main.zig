@@ -9,6 +9,7 @@ const reaper = @import("reaper.zig");
 const signal = @import("signal.zig");
 const daemon = @import("daemon.zig");
 const service_logger = @import("service_logger.zig");
+const ipc = @import("ipc.zig");
 
 pub fn main() !void {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
@@ -24,6 +25,7 @@ pub fn main() !void {
     _ = signal;
     _ = daemon;
     _ = service_logger;
+    _ = ipc;
 }
 
 comptime {
@@ -37,4 +39,5 @@ comptime {
     _ = @import("signal.zig");
     _ = @import("daemon.zig");
     _ = @import("service_logger.zig");
+    _ = @import("ipc.zig");
 }

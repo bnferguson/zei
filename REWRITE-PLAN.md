@@ -129,16 +129,17 @@ Each session is designed to produce a compilable, testable increment. Sessions b
 - [x] Verify: `zig build test` passes
 
 ### Session 10: IPC Server
-- [ ] Implement ipc.zig: Unix domain socket server at `/tmp/zei.sock`
-- [ ] Define request/response protocol (JSON over socket, matching pei's format):
+- [x] Implement ipc.zig: Unix domain socket server at `/tmp/zei.sock`
+- [x] Define request/response protocol (JSON over socket, matching pei's format):
   - IPCRequest: command, service, signal
   - IPCResponse: success, message, services, service
-- [ ] Handle commands: list, status, restart, signal
-- [ ] Signal command: elevate privileges, send signal, drop privileges
-- [ ] Clean up socket on shutdown
-- [ ] Wire into daemon startup
-- [ ] Write unit tests for request parsing and response encoding
-- [ ] Verify: `zig build test` passes
+- [x] Handle commands: list, status, restart, signal
+- [x] Signal command: elevate privileges, send signal, drop privileges
+- [x] Clean up socket on shutdown
+- [x] Non-blocking accept for integration with daemon signal loop
+- [x] Client helper sendRequest() for CLI
+- [x] Write unit tests for request parsing and response encoding
+- [x] Verify: `zig build test` passes
 
 ### Session 11: CLI Client
 - [ ] Implement cli.zig: parse subcommands (list, status, restart, signal, help)

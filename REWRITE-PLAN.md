@@ -117,16 +117,16 @@ Each session is designed to produce a compilable, testable increment. Sessions b
 - [x] Verify: `zig build test` passes
 
 ### Session 9: Service Output Capture + JSON Log Parsing
-- [ ] Implement service_logger.zig: read from stdout/stderr pipes line-by-line
-- [ ] Route output through structured logger with service context (name, pid, user, stream)
-- [ ] JSON log parsing when `json_logs = true`:
+- [x] Implement service_logger.zig: read from stdout/stderr pipes line-by-line
+- [x] Route output through structured logger with service context (name, pid, user, stream)
+- [x] JSON log parsing when `json_logs = true`:
   - Extract level from `level`/`severity`/`lvl` field
   - Extract message from `msg`/`message`/`text`/`content` field
   - Preserve remaining fields as service context
   - Fallback to plain text on parse failure
-- [ ] Wire into daemon's service startup
-- [ ] Write unit tests for plain text and JSON log parsing
-- [ ] Verify: `zig build test` passes
+- [x] drainPipe() for non-blocking pipe reading with remainder buffering
+- [x] Write unit tests for plain text and JSON log parsing
+- [x] Verify: `zig build test` passes
 
 ### Session 10: IPC Server
 - [ ] Implement ipc.zig: Unix domain socket server at `/tmp/zei.sock`

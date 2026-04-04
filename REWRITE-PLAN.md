@@ -142,17 +142,17 @@ Each session is designed to produce a compilable, testable increment. Sessions b
 - [x] Verify: `zig build test` passes
 
 ### Session 11: CLI Client
-- [ ] Implement cli.zig: parse subcommands (list, status, restart, signal, help)
-- [ ] `list`: connect to IPC, display service table (name, status, PID, restarts, uptime)
-- [ ] `status [service]`: detailed status for one or all services
-- [ ] `restart <service>`: send restart request
-- [ ] `signal <service:signal>`: send signal (HUP, TERM, KILL, USR1, USR2)
-- [ ] `help`: usage information
-- [ ] Fallback to config-only display when daemon not running
-- [ ] Format uptime as human-readable (e.g., "2h30m")
-- [ ] Wire into main.zig: route to CLI when not PID 1
-- [ ] Write unit tests for formatting and argument parsing
-- [ ] Verify: `zig build test` passes
+- [x] Implement cli.zig: parse subcommands (list, status, restart, signal, help)
+- [x] `list`: connect to IPC, display service table (name, status, PID, restarts, uptime)
+- [x] `status [service]`: detailed status for one or all services
+- [x] `restart <service>`: send restart request
+- [x] `signal <service:signal>`: send signal (HUP, TERM, KILL, USR1, USR2)
+- [x] `help`: usage information
+- [x] Fallback to config-only display when daemon not running
+- [x] Format uptime as human-readable (e.g., "2h30m")
+- [x] Wire into main.zig: route to CLI when not PID 1
+- [x] Write unit tests for formatting and argument parsing
+- [x] Verify: `zig build test` passes
 
 ### Session 12: Main Entry Point + Integration
 - [ ] Implement main.zig: flag parsing (-c config path, -help)

@@ -19,11 +19,7 @@ pub const Command = enum {
     signal,
 
     pub fn parse(s: []const u8) ?Command {
-        if (std.mem.eql(u8, s, "list")) return .list;
-        if (std.mem.eql(u8, s, "status")) return .status;
-        if (std.mem.eql(u8, s, "restart")) return .restart;
-        if (std.mem.eql(u8, s, "signal")) return .signal;
-        return null;
+        return std.meta.stringToEnum(Command, s);
     }
 };
 
@@ -32,20 +28,6 @@ pub const Request = struct {
     service: ?[]const u8 = null,
     signal: ?[]const u8 = null,
 };
-
-/// Parse a JSON request from a byte slice.
-pub fn parseRequest(allocator: std.mem.Allocator, data: []const u8) !Request {
-    const parsed = try std.json.parseFromSlice(Request, allocator, data, .{
-        .ignore_unknown_fields = true,
-    });
-    defer parsed.deinit();
-    // Copy strings since parsed owns them.
-    return .{
-        .command = parsed.value.command,
-        .service = parsed.value.service,
-        .signal = parsed.value.signal,
-    };
-}
 
 // -- Response writing --
 
@@ -314,21 +296,15 @@ pub const Server = struct {
                 _ = posix.write(fd, fbs.getWritten()) catch {};
                 return;
             };
+            defer privilege.drop(d.app_user, d.app_group) catch {};
         }
 
         posix.kill(pid, sig) catch |err| {
-            if (builtin.os.tag == .linux) {
-                privilege.drop(d.app_user, d.app_group) catch {};
-            }
             self.log.err("signal failed: {s}", .{@errorName(err)});
             writeResponse(fbs.writer(), false, "signal delivery failed", null, null) catch return;
             _ = posix.write(fd, fbs.getWritten()) catch {};
             return;
         };
-
-        if (builtin.os.tag == .linux) {
-            privilege.drop(d.app_user, d.app_group) catch {};
-        }
 
         self.log.info("sent signal {s} to {s} pid={d}", .{ sig_name, name, pid });
         writeResponse(fbs.writer(), true, "signal sent", null, null) catch return;
@@ -355,10 +331,30 @@ fn parseSignalName(name: []const u8) ?u8 {
 
 // -- Client helper (used by CLI) --
 
-pub fn sendRequest(allocator: std.mem.Allocator, req: Request) ![]const u8 {
+/// Response from the daemon, returned by sendRequest.
+/// Caller must call deinit() when done.
+pub const Response = struct {
+    buf: []u8,
+    len: usize,
+    allocator: std.mem.Allocator,
+
+    pub fn deinit(self: *Response) void {
+        self.allocator.free(self.buf);
+        self.* = undefined;
+    }
+
+    pub fn slice(self: *const Response) []const u8 {
+        return self.buf[0..self.len];
+    }
+};
+
+pub fn sendRequest(allocator: std.mem.Allocator, req: Request) !Response {
     const addr = try std.net.Address.initUnix(socket_path);
-    const stream = try std.net.tcpConnectToAddress(addr);
-    defer stream.close();
+
+    // Connect via Unix socket.
+    const fd = try posix.socket(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+    errdefer posix.close(fd);
+    try posix.connect(fd, &addr.any, addr.getOsSockLen());
 
     // Serialize request.
     var buf: [1024]u8 = undefined;
@@ -379,12 +375,18 @@ pub fn sendRequest(allocator: std.mem.Allocator, req: Request) ![]const u8 {
     }
     try w.writeByte('}');
 
-    _ = try posix.write(stream.handle, fbs.getWritten());
+    _ = try posix.write(fd, fbs.getWritten());
 
-    // Read response.
-    var resp_buf = try allocator.alloc(u8, 8192);
-    const n = try posix.read(stream.handle, resp_buf);
-    return resp_buf[0..n];
+    // Shutdown write side so the server knows we're done.
+    posix.shutdown(fd, .send) catch {};
+
+    // Read response into allocated buffer.
+    const resp_buf = try allocator.alloc(u8, 8192);
+    errdefer allocator.free(resp_buf);
+    const n = try posix.read(fd, resp_buf);
+    posix.close(fd);
+
+    return .{ .buf = resp_buf, .len = n, .allocator = allocator };
 }
 
 // -- Tests --

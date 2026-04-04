@@ -26,10 +26,13 @@ fn processPlainLine(log: logger.Logger, line: []const u8, stream: []const u8) vo
 }
 
 fn processJsonLine(log: logger.Logger, line: []const u8, stream: []const u8) void {
-    // Try to parse as JSON.
+    // Stack-backed allocator for JSON parsing — avoids page_allocator overhead.
+    var arena_buf: [8192]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&arena_buf);
+
     var parsed = std.json.parseFromSlice(
         std.json.Value,
-        std.heap.page_allocator,
+        fba.allocator(),
         line,
         .{},
     ) catch {

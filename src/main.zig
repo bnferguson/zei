@@ -6,6 +6,7 @@ const config = @import("config.zig");
 const daemon = @import("daemon.zig");
 const ipc = @import("ipc.zig");
 const logger = @import("logger.zig");
+const privilege = @import("privilege.zig");
 const signal = @import("signal.zig");
 
 const default_config_path = "/etc/zei/zei.toml";
@@ -16,9 +17,8 @@ fn writeStderr(msg: []const u8) void {
     _ = posix.write(posix.STDERR_FILENO, msg) catch {};
 }
 
-pub fn main() !void {
+pub fn main() void {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     // Parse arguments.
@@ -27,7 +27,6 @@ pub fn main() !void {
 
     var config_path: []const u8 = default_config_path;
     var cli_args: std.ArrayListUnmanaged([]const u8) = .{};
-    defer cli_args.deinit(allocator);
 
     while (args_iter.next()) |arg| {
         if (std.mem.eql(u8, arg, "-c")) {
@@ -46,13 +45,7 @@ pub fn main() !void {
     if (cli.run(allocator, cli_args.items, config_path)) return;
 
     // No CLI command handled — check if we should run as daemon.
-    const c = @cImport({
-        @cInclude("unistd.h");
-    });
-    const pid = c.getpid();
-    const euid = c.geteuid();
-
-    if (pid != 1) {
+    if (std.c.getpid() != 1) {
         writeStderr(
             "No zei daemon running. Available commands:\n" ++
                 "  zei list                    List all services\n" ++
@@ -64,7 +57,7 @@ pub fn main() !void {
         posix.exit(1);
     }
 
-    if (euid != 0) {
+    if (std.c.geteuid() != 0) {
         writeStderr("error: zei must run as root\n");
         posix.exit(1);
     }
@@ -107,7 +100,6 @@ pub fn main() !void {
     d.startAll();
 
     // Drop privileges after starting services.
-    const privilege = @import("privilege.zig");
     privilege.drop(app_user, app_group) catch |err| {
         log.err("failed to drop privileges: {s}", .{@errorName(err)});
         posix.exit(1);

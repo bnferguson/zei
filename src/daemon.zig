@@ -359,13 +359,14 @@ pub const Daemon = struct {
         self.elevatePrivileges() catch {};
 
         // Cancel any pending restarts and restart-after-stop flags.
-        // Shutdown manages its own SIGKILL timeline.
+        // Preserve kill_deadline for services already in .stopping —
+        // they keep their original SIGKILL deadline rather than getting
+        // the full 30s shutdown grace period.
         for (self.statuses) |*status| {
             if (status.state == .restart_pending) {
                 status.cancelRestartPending();
             }
             status.restart_after_stop = false;
-            status.kill_deadline = null;
         }
 
         // Send SIGTERM to all running services.
@@ -384,9 +385,13 @@ pub const Daemon = struct {
         }
 
         // Wait up to 30 seconds for services to exit.
+        // checkStoppingServices escalates services with an existing
+        // kill_deadline to SIGKILL (e.g., services mid-restart when
+        // shutdown began).
         const deadline_s: i64 = std.time.timestamp() + 30;
         while (self.hasRunningServices() and std.time.timestamp() < deadline_s) {
             posix.nanosleep(0, 250_000_000); // 250ms
+            self.checkStoppingServices();
             self.reapAndProcess();
         }
 
@@ -762,39 +767,41 @@ test "handleChildExit restarts service when restart_after_stop is set" {
     }
 }
 
-test "shutdown clears restart_after_stop and kill_deadline" {
+test "shutdown clears restart_after_stop but preserves kill_deadline" {
     var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
     defer cfg.deinit();
 
     var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
     defer d.deinit();
 
-    // Set up restart flags on several services in different states.
-    d.statuses[0].restart_after_stop = true;
-    d.statuses[0].kill_deadline = std.time.milliTimestamp() + 5000;
+    const deadline = std.time.milliTimestamp() + 5000;
 
+    // Simulate a stopping service with a kill deadline (mid-restart).
+    d.statuses[0].restart_after_stop = true;
+    d.statuses[0].kill_deadline = deadline;
+
+    // Simulate a service with a pending restart.
     d.statuses[1].recordRestartPending(std.time.milliTimestamp() + 5000);
     d.statuses[1].restart_after_stop = true;
 
-    // shutdownServices clears flags early in the function, before
-    // entering the wait loop. Test the flag-clearing directly by
-    // checking the state after shutdown sets shutting_down = true
-    // and clears flags. We can't call shutdownServices with fake
-    // PIDs (it would block on hasRunningServices), so test the
-    // invariants directly.
-    d.shutting_down = true;
-
     // Simulate the flag-clearing loop from shutdownServices.
+    // We can't call shutdownServices with fake PIDs, so test the
+    // invariants directly.
     for (d.statuses) |*status| {
         if (status.state == .restart_pending) {
             status.cancelRestartPending();
         }
         status.restart_after_stop = false;
-        status.kill_deadline = null;
     }
 
+    // restart_after_stop should be cleared everywhere.
     try std.testing.expect(!d.statuses[0].restart_after_stop);
-    try std.testing.expect(d.statuses[0].kill_deadline == null);
     try std.testing.expect(!d.statuses[1].restart_after_stop);
+
+    // kill_deadline preserved — checkStoppingServices will honor it
+    // during the shutdown wait loop.
+    try std.testing.expectEqual(@as(?i64, deadline), d.statuses[0].kill_deadline);
+
+    // restart_pending should be cancelled.
     try std.testing.expectEqual(monitor.ServiceState.stopped, d.statuses[1].state);
 }

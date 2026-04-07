@@ -127,7 +127,7 @@ pub const Daemon = struct {
     /// Restart a service. Non-blocking: if the service is running, sends
     /// SIGTERM and sets a flag so handleChildExit starts it after exit.
     pub fn restartService(self: *Daemon, idx: usize) void {
-        std.debug.assert(idx < self.cfg.services.len);
+        if (idx >= self.cfg.services.len) return;
         const svc = &self.cfg.services[idx];
         const svc_log = self.log.forService(svc.name);
         const status = &self.statuses[idx];
@@ -373,8 +373,7 @@ pub const Daemon = struct {
         // Send SIGTERM to all running services.
         for (self.statuses, 0..) |*status, i| {
             if (status.state == .running) {
-                // Running services always have a pid (set by recordStarted).
-                const pid = status.pid.?;
+                const pid = status.pid orelse continue;
                 const svc_log = shutdown_log.forService(self.cfg.services[i].name);
                 self.sendSignalToService(i, posix.SIG.TERM) catch |err| {
                     svc_log.err("SIGTERM failed: {s}", .{@errorName(err)});
@@ -401,10 +400,11 @@ pub const Daemon = struct {
             shutdown_log.warn("timeout, sending SIGKILL to remaining services", .{});
             for (self.statuses, 0..) |*status, i| {
                 if (status.state == .running or status.state == .stopping) {
-                    std.debug.assert(status.pid != null);
                     self.sendSignalToService(i, posix.SIG.KILL) catch |kill_err| {
                         if (kill_err == error.PermissionDenied) {
-                            shutdown_log.err("SIGKILL failed (EPERM) pid={d}", .{status.pid.?});
+                            if (status.pid) |pid| {
+                                shutdown_log.err("SIGKILL failed (EPERM) pid={d}", .{pid});
+                            }
                         }
                     };
                 }
@@ -424,8 +424,7 @@ pub const Daemon = struct {
         defer self.dropPrivileges();
 
         for (self.statuses, 0..) |*status, i| {
-            if (status.state == .running) {
-                std.debug.assert(status.pid != null);
+            if (status.state == .running and status.pid != null) {
                 self.sendSignalToService(i, sig) catch |err| {
                     self.log.forService(self.cfg.services[i].name)
                         .err("signal {d} failed: {s}", .{ sig, @errorName(err) });
@@ -463,7 +462,7 @@ pub const Daemon = struct {
     /// Send a signal to a service, preferring pidfd over kill(2) to avoid
     /// PID-reuse races. Falls back to kill(2) when pidfd is unavailable.
     pub fn sendSignalToService(self: *Daemon, idx: usize, sig: u8) !void {
-        std.debug.assert(idx < self.cfg.services.len);
+        if (idx >= self.cfg.services.len) return error.ProcessNotFound;
         const pid = self.statuses[idx].pid orelse return error.ProcessNotFound;
 
         if (self.spawns[idx]) |spawn| {
@@ -477,9 +476,9 @@ pub const Daemon = struct {
             }
         }
 
-        // Fallback: no pidfd available. Assert pid > 0 because
+        // Fallback: no pidfd available. Guard pid > 0 because
         // kill(2) interprets 0 and negative pids as process groups.
-        std.debug.assert(pid > 0);
+        if (pid <= 0) return error.ProcessNotFound;
         try posix.kill(pid, sig);
     }
 

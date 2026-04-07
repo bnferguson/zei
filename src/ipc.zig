@@ -138,18 +138,7 @@ fn writeServiceStatus(w: anytype, svc: *const config.Service, status: *const mon
     try w.writeByte('}');
 }
 
-fn writeJsonEscaped(w: anytype, s: []const u8) !void {
-    for (s) |c| {
-        switch (c) {
-            '"' => try w.writeAll("\\\""),
-            '\\' => try w.writeAll("\\\\"),
-            '\n' => try w.writeAll("\\n"),
-            '\r' => try w.writeAll("\\r"),
-            '\t' => try w.writeAll("\\t"),
-            else => try w.writeByte(c),
-        }
-    }
-}
+const writeJsonEscaped = logger.writeJsonEscaped;
 
 // -- IPC Server --
 

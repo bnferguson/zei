@@ -9,7 +9,6 @@ pub const ServiceState = enum {
     stopping,
     restart_pending,
     failed,
-
 };
 
 /// How a child process exited.

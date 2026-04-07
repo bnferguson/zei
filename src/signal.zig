@@ -62,7 +62,6 @@ pub fn blockManagedSignals() void {
     posix.sigprocmask(posix.SIG.BLOCK, &mask, null);
 }
 
-
 /// Restore the default signal mask (unblock managed signals).
 /// Useful for child processes after fork, before exec.
 pub fn unblockManagedSignals() void {

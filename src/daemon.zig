@@ -198,6 +198,7 @@ pub const Daemon = struct {
     /// On exit, cleans up the spawn and records the exit status.
     /// Returns true if the process exited, false if it's still running.
     fn waitForExit(self: *Daemon, idx: usize, pid: posix.pid_t, max_polls: u32) bool {
+        comptime std.debug.assert(@sizeOf(c_int) == @sizeOf(u32));
         std.debug.assert(idx < self.cfg.services.len);
         std.debug.assert(self.statuses[idx].pid != null and self.statuses[idx].pid.? == pid);
 
@@ -453,13 +454,15 @@ pub const Daemon = struct {
             }
         }
 
-        // Fallback: no pidfd available.
+        // Fallback: no pidfd available. Assert pid > 0 because
+        // kill(2) interprets 0 and negative pids as process groups.
+        std.debug.assert(pid > 0);
         try posix.kill(pid, sig);
     }
 
     fn findServiceByPid(self: *const Daemon, pid: posix.pid_t) ?usize {
         for (self.statuses, 0..) |*status, i| {
-            if (status.pid != null and status.pid.? == pid) return i;
+            if (status.pid) |p| if (p == pid) return i;
         }
         return null;
     }
@@ -484,7 +487,6 @@ pub const Daemon = struct {
 
         return env;
     }
-
 };
 
 fn sleepNs(ns: u64) void {

@@ -61,20 +61,18 @@ pub const Config = struct {
         self.* = undefined;
     }
 
-    /// Look up a service by name. Returns null if not found.
-    pub fn getService(self: *const Config, name: []const u8) ?*const Service {
-        for (self.services) |*svc| {
-            if (std.mem.eql(u8, svc.name, name)) return svc;
-        }
-        return null;
-    }
-
     /// Look up a service index by name. Returns null if not found.
     pub fn getServiceIndex(self: *const Config, name: []const u8) ?usize {
         for (self.services, 0..) |svc, i| {
             if (std.mem.eql(u8, svc.name, name)) return i;
         }
         return null;
+    }
+
+    /// Look up a service by name. Returns null if not found.
+    pub fn getService(self: *const Config, name: []const u8) ?*const Service {
+        const idx = self.getServiceIndex(name) orelse return null;
+        return &self.services[idx];
     }
 };
 

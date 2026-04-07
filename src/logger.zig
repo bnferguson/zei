@@ -110,7 +110,7 @@ pub const Logger = struct {
         self.write(.err, fmt, args);
     }
 
-    fn write(self: Logger, level: Level, comptime fmt: []const u8, args: anytype) void {
+    pub fn write(self: Logger, level: Level, comptime fmt: []const u8, args: anytype) void {
         if (@intFromEnum(level) < @intFromEnum(self.level)) return;
 
         var msg_buf: [max_line_length]u8 = undefined;

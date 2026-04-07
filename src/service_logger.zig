@@ -62,25 +62,10 @@ fn processJsonLine(log: logger.Logger, line: []const u8, stream: []const u8) voi
     const ctx = ctx_fbs.getWritten();
 
     // Log at the extracted level.
-    const svc_log = log;
-    switch (level) {
-        .debug => if (ctx.len > 0)
-            svc_log.debug("[{s}] {s} {s}", .{ stream, message, ctx })
-        else
-            svc_log.debug("[{s}] {s}", .{ stream, message }),
-        .info => if (ctx.len > 0)
-            svc_log.info("[{s}] {s} {s}", .{ stream, message, ctx })
-        else
-            svc_log.info("[{s}] {s}", .{ stream, message }),
-        .warn => if (ctx.len > 0)
-            svc_log.warn("[{s}] {s} {s}", .{ stream, message, ctx })
-        else
-            svc_log.warn("[{s}] {s}", .{ stream, message }),
-        .err => if (ctx.len > 0)
-            svc_log.err("[{s}] {s} {s}", .{ stream, message, ctx })
-        else
-            svc_log.err("[{s}] {s}", .{ stream, message }),
-    }
+    if (ctx.len > 0)
+        log.write(level, "[{s}] {s} {s}", .{ stream, message, ctx })
+    else
+        log.write(level, "[{s}] {s}", .{ stream, message });
 }
 
 /// Level field names to check, in priority order.

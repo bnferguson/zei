@@ -182,6 +182,8 @@ fn testService(overrides: struct {
     return .{
         .name = "test-svc",
         .command = &.{"/bin/true"},
+        .user = "testuser",
+        .group = "testgroup",
         .restart = overrides.restart,
         .max_restarts = overrides.max_restarts,
         .oneshot = overrides.oneshot,

@@ -474,12 +474,34 @@ pub const Daemon = struct {
         return false;
     }
 
+    /// Linker/loader env vars that enable code injection via ld.so.
+    const blocked_env_vars = [_][]const u8{
+        "LD_PRELOAD",
+        "LD_LIBRARY_PATH",
+        "LD_AUDIT",
+        "LD_DEBUG",
+        "LD_TRACE_LOADED_OBJECTS",
+        "GCONV_PATH",
+    };
+
+    fn isBlockedEnvVar(key: []const u8) bool {
+        for (blocked_env_vars) |blocked| {
+            if (std.mem.eql(u8, key, blocked)) return true;
+        }
+        return false;
+    }
+
     fn buildEnvMap(self: *Daemon, svc: *const config.Service) !std.process.EnvMap {
         var env = std.process.EnvMap.init(self.allocator);
         errdefer env.deinit();
 
         if (svc.environment) |env_config| {
             for (env_config.keys(), env_config.values()) |key, value| {
+                if (isBlockedEnvVar(key)) {
+                    self.log.forService(svc.name)
+                        .warn("blocked env var {s} stripped from environment", .{key});
+                    continue;
+                }
                 try env.put(key, value);
             }
         }
@@ -610,4 +632,43 @@ test "restartService no-ops when service is running" {
     // PID unchanged, still running.
     try std.testing.expectEqual(monitor.ServiceState.running, d.statuses[0].state);
     try std.testing.expectEqual(pid_before, d.statuses[0].pid);
+}
+
+test "isBlockedEnvVar blocks linker injection vars" {
+    try std.testing.expect(Daemon.isBlockedEnvVar("LD_PRELOAD"));
+    try std.testing.expect(Daemon.isBlockedEnvVar("LD_LIBRARY_PATH"));
+    try std.testing.expect(Daemon.isBlockedEnvVar("LD_AUDIT"));
+    try std.testing.expect(Daemon.isBlockedEnvVar("LD_DEBUG"));
+    try std.testing.expect(Daemon.isBlockedEnvVar("LD_TRACE_LOADED_OBJECTS"));
+    try std.testing.expect(Daemon.isBlockedEnvVar("GCONV_PATH"));
+}
+
+test "isBlockedEnvVar allows safe vars" {
+    try std.testing.expect(!Daemon.isBlockedEnvVar("PATH"));
+    try std.testing.expect(!Daemon.isBlockedEnvVar("LOG_LEVEL"));
+    try std.testing.expect(!Daemon.isBlockedEnvVar("HOME"));
+    try std.testing.expect(!Daemon.isBlockedEnvVar("LD_PRELOAD_EXTRA")); // not exact match
+}
+
+test "buildEnvMap skips blocked vars" {
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
+
+    var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
+    defer d.deinit();
+
+    // Build a service with a blocked and a safe env var.
+    var svc = cfg.services[0];
+    var env_map: config.EnvironmentMap = .{};
+    try env_map.put(std.testing.allocator, "LOG_LEVEL", "info");
+    try env_map.put(std.testing.allocator, "LD_PRELOAD", "/evil.so");
+    defer env_map.deinit(std.testing.allocator);
+    svc.environment = env_map;
+
+    var result = try d.buildEnvMap(&svc);
+    defer result.deinit();
+
+    // Safe var kept, blocked var stripped.
+    try std.testing.expect(result.get("LOG_LEVEL") != null);
+    try std.testing.expect(result.get("LD_PRELOAD") == null);
 }

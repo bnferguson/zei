@@ -38,8 +38,8 @@ fn checkPeerCredentials(fd: posix.fd_t, app_uid: posix.uid_t, log: logger.Logger
     if (builtin.os.tag != .linux) return true;
 
     var cred: Ucred = undefined;
-    posix.getsockopt(fd, posix.SOL.SOCKET, posix.SO.PEERCRED, std.mem.asBytes(&cred)) catch {
-        log.err("SO_PEERCRED failed", .{});
+    posix.getsockopt(fd, posix.SOL.SOCKET, posix.SO.PEERCRED, std.mem.asBytes(&cred)) catch |err| {
+        log.err("SO_PEERCRED failed: {s}", .{@errorName(err)});
         return false;
     };
 
@@ -207,7 +207,10 @@ pub const Server = struct {
             .force_nonblocking = true,
             .kernel_backlog = 8,
         });
-        errdefer server.deinit();
+        errdefer {
+            server.deinit();
+            std.fs.deleteFileAbsolute(socket_path) catch {};
+        }
 
         log.info("IPC server listening on {s}", .{socket_path});
 
@@ -408,8 +411,8 @@ pub const Server = struct {
                 _ = posix.write(fd, fbs.getWritten()) catch {};
                 return;
             };
-            defer privilege.drop(d.app_user, d.app_group) catch {};
         }
+        defer if (builtin.os.tag == .linux) self.dropOrShutdown(d);
 
         posix.kill(pid, sig) catch |err| {
             self.log.err("signal failed: {s}", .{@errorName(err)});
@@ -421,6 +424,16 @@ pub const Server = struct {
         self.log.info("sent signal {s} to {s} pid={d}", .{ sig_name, name, pid });
         writeResponse(fbs.writer(), true, "signal sent", null, null) catch return;
         _ = posix.write(fd, fbs.getWritten()) catch {};
+    }
+
+    /// Drop privileges after an elevated operation. If drop fails, the daemon
+    /// must not continue running as root — initiate immediate shutdown.
+    fn dropOrShutdown(self: *Server, d: *daemon.Daemon) void {
+        privilege.drop(d.app_user, d.app_group) catch |err| {
+            self.log.err("CRITICAL: privilege drop failed: {s} — initiating shutdown", .{@errorName(err)});
+            if (!d.shutting_down) d.shutdownServices();
+            return;
+        };
     }
 
     fn writeError(self: *Server, fd: posix.fd_t, message: []const u8) void {
@@ -465,7 +478,7 @@ pub fn sendRequest(allocator: std.mem.Allocator, req: Request) !Response {
 
     // Connect via Unix socket.
     const fd = try posix.socket(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
-    errdefer posix.close(fd);
+    defer posix.close(fd);
     try posix.connect(fd, &addr.any, addr.getOsSockLen());
 
     // Serialize request.
@@ -496,7 +509,6 @@ pub fn sendRequest(allocator: std.mem.Allocator, req: Request) !Response {
     const resp_buf = try allocator.alloc(u8, 8192);
     errdefer allocator.free(resp_buf);
     const n = try posix.read(fd, resp_buf);
-    posix.close(fd);
 
     return .{ .buf = resp_buf, .len = n, .allocator = allocator };
 }

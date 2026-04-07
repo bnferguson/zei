@@ -134,17 +134,17 @@ pub const Daemon = struct {
                 return;
             };
         }
+        defer if (builtin.os.tag == .linux) {
+            privilege.drop(self.app_user, self.app_group) catch |err| {
+                svc_log.err("CRITICAL: drop failed after restart: {s} — initiating shutdown", .{@errorName(err)});
+                if (!self.shutting_down) self.shutdownServices();
+            };
+        };
 
         // If the service is currently running, stop it first.
         self.stopService(idx);
 
         self.startService(idx);
-
-        if (builtin.os.tag == .linux) {
-            privilege.drop(self.app_user, self.app_group) catch |err| {
-                svc_log.err("drop failed after restart: {s}", .{@errorName(err)});
-            };
-        }
     }
 
     /// Stop a running service by sending SIGTERM and waiting for exit.
@@ -387,6 +387,12 @@ pub const Daemon = struct {
                 return;
             };
         }
+        defer if (builtin.os.tag == .linux) {
+            privilege.drop(self.app_user, self.app_group) catch |err| {
+                self.log.err("CRITICAL: drop failed after signal forwarding: {s} — initiating shutdown", .{@errorName(err)});
+                if (!self.shutting_down) self.shutdownServices();
+            };
+        };
 
         for (self.statuses, 0..) |*status, i| {
             if (status.state == .running) {
@@ -397,12 +403,6 @@ pub const Daemon = struct {
                     };
                 }
             }
-        }
-
-        if (builtin.os.tag == .linux) {
-            privilege.drop(self.app_user, self.app_group) catch |err| {
-                self.log.err("drop failed after signal forwarding: {s}", .{@errorName(err)});
-            };
         }
     }
 

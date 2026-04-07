@@ -105,8 +105,7 @@ test "spawn with working directory" {
     defer std.testing.allocator.free(r.output);
 
     const trimmed = std.mem.trimRight(u8, r.output, "\n");
-    // /tmp may be a symlink (e.g., /private/tmp on macOS).
-    try std.testing.expect(std.mem.endsWith(u8, trimmed, "tmp"));
+    try std.testing.expectEqualStrings("/tmp", trimmed);
 }
 
 test "spawn with environment variables" {

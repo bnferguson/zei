@@ -1,7 +1,11 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{});
+    // Default to Linux so `zig build` cross-compiles from macOS for syntax checking.
+    // Tests still require `make docker-test` (can't run Linux binaries on macOS).
+    const target = b.standardTargetOptions(.{
+        .default_target = .{ .os_tag = .linux },
+    });
     const optimize = b.standardOptimizeOption(.{});
 
     const yaml_dep = b.dependency("yaml", .{

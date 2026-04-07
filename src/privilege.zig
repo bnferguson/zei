@@ -111,4 +111,9 @@ test "drop and elevate round-trip" {
 
     try elevate();
     try std.testing.expectEqual(@as(c_uint, 0), c.geteuid());
+
+    // Restore real uid/gid to root so we don't contaminate other tests.
+    // After elevate(), real=1000 effective=0 — put both back to 0.
+    std.debug.assert(c.setreuid(0, 0) == 0);
+    std.debug.assert(c.setregid(0, 0) == 0);
 }

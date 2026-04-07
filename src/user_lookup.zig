@@ -71,17 +71,12 @@ test "lookupUser finds root" {
 }
 
 test "lookupGroup finds gid 0 group" {
-    const builtin = @import("builtin");
-    // gid 0 is "root" on Linux, "wheel" on macOS.
-    const name = if (builtin.os.tag == .linux) "root" else "wheel";
-    const gid = try lookupGroup(name);
+    const gid = try lookupGroup("root");
     try std.testing.expectEqual(@as(std.posix.gid_t, 0), gid);
 }
 
 test "lookup returns both uid and gid" {
-    const builtin = @import("builtin");
-    const group = if (builtin.os.tag == .linux) "root" else "wheel";
-    const creds = try lookup("root", group);
+    const creds = try lookup("root", "root");
     try std.testing.expectEqual(@as(std.posix.uid_t, 0), creds.uid);
     try std.testing.expectEqual(@as(std.posix.gid_t, 0), creds.gid);
 }

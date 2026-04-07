@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const posix = std.posix;
 
 /// The set of signals we handle. Blocked at startup so they queue
@@ -71,28 +70,14 @@ pub fn unblockManagedSignals() void {
 
 /// Wait for a managed signal, returning the signal number.
 ///
-/// On Linux, uses the rt_sigtimedwait syscall for efficient blocking
-/// with a 1-second timeout. On other platforms (macOS), polls with
-/// a short sleep — sigtimedwait is not available as a high-level
-/// function in Zig 0.15.2 on macOS.
-///
+/// Uses sigtimedwait for efficient blocking with a 1-second timeout.
 /// Returns the signal number, or null if the timeout expired without
 /// a signal being delivered.
 pub fn waitForSignal() ?u8 {
     const mask = managedSignalMask();
-
-    if (builtin.os.tag == .linux) {
-        return waitForSignalLinux(&mask);
-    } else {
-        return waitForSignalPoll();
-    }
-}
-
-/// Linux implementation using libc sigtimedwait.
-fn waitForSignalLinux(mask: *const posix.sigset_t) ?u8 {
     var timeout = std.c.timespec{ .sec = 1, .nsec = 0 };
 
-    const sig = c.sigtimedwait(@ptrCast(mask), null, @ptrCast(&timeout));
+    const sig = c.sigtimedwait(@ptrCast(&mask), null, @ptrCast(&timeout));
     if (sig > 0) {
         return @intCast(sig);
     }
@@ -102,37 +87,8 @@ fn waitForSignalLinux(mask: *const posix.sigset_t) ?u8 {
 
 const c = @cImport({
     @cInclude("signal.h");
-    if (builtin.os.tag == .linux) @cInclude("time.h");
+    @cInclude("time.h");
 });
-
-/// Fallback polling implementation for macOS and other platforms.
-/// Uses sigpending to check for queued signals, then sigwait to
-/// consume one. Falls back to a short sleep if no signals pending.
-fn waitForSignalPoll() ?u8 {
-    var mask: c.sigset_t = 0;
-    _ = c.sigemptyset(&mask);
-    for (managed_signals) |sig| {
-        _ = c.sigaddset(&mask, @intCast(sig));
-    }
-
-    var pending: c.sigset_t = 0;
-    if (c.sigpending(&pending) != 0) return null;
-
-    for (managed_signals) |sig| {
-        if (c.sigismember(&pending, @intCast(sig)) == 1) {
-            var result_sig: c_int = 0;
-            const rc = c.sigwait(&mask, &result_sig);
-            if (rc == 0 and result_sig > 0) {
-                return @intCast(result_sig);
-            }
-            return null;
-        }
-    }
-
-    // No signals pending — sleep briefly and let the caller loop.
-    posix.nanosleep(0, 100_000_000); // 100ms
-    return null;
-}
 
 // -- Tests --
 

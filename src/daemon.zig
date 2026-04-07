@@ -1,6 +1,5 @@
 const std = @import("std");
 const posix = std.posix;
-const builtin = @import("builtin");
 
 const config = @import("config.zig");
 const ipc = @import("ipc.zig");
@@ -435,21 +434,23 @@ pub const Daemon = struct {
 
     // -- Privilege helpers --
 
-    /// Elevate to root on Linux. No-op on other platforms.
-    /// On failure, logs the error and returns it so callers can bail.
-    fn elevatePrivileges(self: *Daemon) error{ElevateFailed}!void {
-        if (builtin.os.tag != .linux) return;
+    /// Elevate to root so we can spawn/signal services as different users.
+    /// Only cycles when the suid pattern is active (real != effective UID).
+    /// When running as plain root (e.g., tests), this is a no-op.
+    pub fn elevatePrivileges(self: *Daemon) error{ElevateFailed}!void {
+        if (std.c.getuid() == std.c.geteuid()) return;
         privilege.elevate() catch |err| {
             self.log.err("privilege elevation failed: {s}", .{@errorName(err)});
             return error.ElevateFailed;
         };
     }
 
-    /// Drop back to app user on Linux. No-op on other platforms.
+    /// Drop back to app user after a privileged operation.
+    /// Only cycles when the suid pattern is active (real != effective UID).
     /// Logs on failure but does not return an error — callers should
     /// not abort work that already succeeded because of a drop failure.
-    fn dropPrivileges(self: *Daemon) void {
-        if (builtin.os.tag != .linux) return;
+    pub fn dropPrivileges(self: *Daemon) void {
+        if (std.c.getuid() == std.c.geteuid()) return;
         privilege.drop(self.app_user, self.app_group) catch |err| {
             self.log.err("privilege drop failed: {s}", .{@errorName(err)});
         };

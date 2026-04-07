@@ -1,12 +1,9 @@
 const std = @import("std");
 const posix = std.posix;
-const builtin = @import("builtin");
-
 const config = @import("config.zig");
 const daemon = @import("daemon.zig");
 const logger = @import("logger.zig");
 const monitor = @import("monitor.zig");
-const privilege = @import("privilege.zig");
 const user_lookup = @import("user_lookup.zig");
 
 pub const socket_dir = "/run/zei";
@@ -16,7 +13,7 @@ pub const socket_path = socket_dir ++ "/zei.sock";
 /// Prevents connection floods from starving signal handling.
 pub const max_connections_per_poll = 4;
 
-// -- Peer credential checking (Linux only) --
+// -- Peer credential checking --
 
 /// Linux ucred struct returned by SO_PEERCRED. Defined here rather than via
 /// @cImport because the libc header requires _GNU_SOURCE, and the layout
@@ -32,11 +29,8 @@ const Ucred = extern struct {
 };
 
 /// Verify the connecting peer is either root or the app user.
-/// Returns true if authorized, false if rejected. On non-Linux, always returns true
-/// (the socket directory permissions provide the access control).
+/// Returns true if authorized, false if rejected.
 fn checkPeerCredentials(fd: posix.fd_t, app_uid: posix.uid_t, log: logger.Logger) bool {
-    if (builtin.os.tag != .linux) return true;
-
     var cred: Ucred = undefined;
     posix.getsockopt(fd, posix.SOL.SOCKET, posix.SO.PEERCRED, std.mem.asBytes(&cred)) catch {
         log.err("SO_PEERCRED failed", .{});
@@ -366,14 +360,11 @@ pub const Server = struct {
             return;
         };
 
-        // Elevate to send signal on Linux.
-        if (builtin.os.tag == .linux) {
-            privilege.elevate() catch {
-                sendSimpleResponse(fd, false, "privilege elevation failed");
-                return;
-            };
-            defer privilege.drop(d.app_user, d.app_group) catch {};
-        }
+        d.elevatePrivileges() catch {
+            sendSimpleResponse(fd, false, "privilege elevation failed");
+            return;
+        };
+        defer d.dropPrivileges();
 
         d.sendSignalToService(idx, sig) catch |err| {
             self.log.err("signal failed: {s}", .{@errorName(err)});
@@ -544,17 +535,7 @@ test "max_connections_per_poll is bounded" {
     try std.testing.expect(max_connections_per_poll <= 16);
 }
 
-test "checkPeerCredentials allows on non-Linux" {
-    if (builtin.os.tag == .linux) return error.SkipZigTest;
-
-    // On non-Linux, should always return true (directory permissions are the gate).
-    const log = logger.Logger.initFromEnv().scoped("test");
-    try std.testing.expect(checkPeerCredentials(-1, 1000, log));
-}
-
-test "checkPeerCredentials allows matching uid on Linux" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-
+test "checkPeerCredentials allows matching uid" {
     // Create a Unix socket pair to test SO_PEERCRED.
     var fds: [2]c_int = undefined;
     if (std.c.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &fds) != 0) return error.SkipZigTest;
@@ -568,29 +549,22 @@ test "checkPeerCredentials allows matching uid on Linux" {
     try std.testing.expect(checkPeerCredentials(@intCast(fds[0]), our_uid, log));
 }
 
-test "checkPeerCredentials rejects unauthorized uid on Linux" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
+test "checkPeerCredentials rejects unauthorized uid" {
+    // SO_PEERCRED reports the effective UID. Set real and effective to
+    // appuser so the peer isn't root (which is always authorized).
+    // Use the setresuid syscall to explicitly keep root in the saved
+    // set-user-ID slot — setreuid would overwrite it, locking us out.
+    const appuser_uid = 1000;
+    std.debug.assert(std.os.linux.E.init(std.os.linux.setresuid(appuser_uid, appuser_uid, 0)) == .SUCCESS);
+    defer std.debug.assert(std.os.linux.E.init(std.os.linux.setresuid(0, 0, 0)) == .SUCCESS);
 
     var fds: [2]c_int = undefined;
-    if (std.c.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &fds) != 0) return error.SkipZigTest;
+    std.debug.assert(std.c.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &fds) == 0);
     defer posix.close(@intCast(fds[0]));
     defer posix.close(@intCast(fds[1]));
 
-    // SO_PEERCRED reports the real UID of the connecting process. Read it
-    // directly rather than using getuid(), since earlier privilege tests
-    // may have changed the real UID via setreuid.
-    var cred: Ucred = undefined;
-    posix.getsockopt(@intCast(fds[0]), posix.SOL.SOCKET, posix.SO.PEERCRED, std.mem.asBytes(&cred)) catch
-        return error.SkipZigTest;
-
-    // If the peer UID is 0 (root), it's always authorized — can't test rejection.
-    if (cred.uid == 0) return error.SkipZigTest;
-
     const log = logger.Logger.initFromEnv().scoped("test");
 
-    // Set app_uid to something that doesn't match the peer — should reject.
-    // Wrapping add handles maxInt(u32) edge case; wrapping to 0 (root) is
-    // fine since root peers are already skipped above.
-    const non_matching_uid = cred.uid +% 1;
-    try std.testing.expect(!checkPeerCredentials(@intCast(fds[0]), non_matching_uid, log));
+    // Peer UID is 1000 (appuser). Set app_uid to something else — should reject.
+    try std.testing.expect(!checkPeerCredentials(@intCast(fds[0]), appuser_uid + 1, log));
 }

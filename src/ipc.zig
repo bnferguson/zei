@@ -550,6 +550,9 @@ test "checkPeerCredentials allows matching uid" {
 }
 
 test "checkPeerCredentials rejects unauthorized uid" {
+    // Needs root to call setresuid.
+    if (std.c.geteuid() != 0) return error.SkipZigTest;
+
     // SO_PEERCRED reports the effective UID. Set real and effective to
     // appuser so the peer isn't root (which is always authorized).
     // Use the setresuid syscall to explicitly keep root in the saved

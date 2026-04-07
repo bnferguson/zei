@@ -2,6 +2,7 @@ const std = @import("std");
 const posix = std.posix;
 
 const Child = std.process.Child;
+const pidfd = @import("pidfd.zig");
 
 pub const SpawnOptions = struct {
     argv: []const []const u8,
@@ -18,8 +19,10 @@ pub const SpawnResult = struct {
     pid: posix.pid_t,
     stdout: std.fs.File,
     stderr: std.fs.File,
+    pidfd: ?posix.fd_t = null,
 
     pub fn deinit(self: *SpawnResult) void {
+        if (self.pidfd) |pfd| pidfd.close(pfd);
         self.stdout.close();
         self.stderr.close();
         self.* = undefined;
@@ -49,6 +52,7 @@ pub fn spawn(allocator: std.mem.Allocator, opts: SpawnOptions) Child.SpawnError!
         .pid = child.id,
         .stdout = child.stdout.?,
         .stderr = child.stderr.?,
+        .pidfd = pidfd.open(child.id) catch null,
     };
 }
 

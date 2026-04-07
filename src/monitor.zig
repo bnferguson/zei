@@ -7,6 +7,7 @@ pub const ServiceState = enum {
     starting,
     running,
     stopping,
+    restart_pending,
     failed,
 
     pub fn label(self: ServiceState) [:0]const u8 {
@@ -37,6 +38,7 @@ pub const ServiceStatus = struct {
     exit_info: ?ExitInfo,
     restart_count: u32,
     started_at: ?i64,
+    restart_after: ?i64 = null,
 
     pub fn init(name: []const u8) ServiceStatus {
         return .{
@@ -46,22 +48,41 @@ pub const ServiceStatus = struct {
             .exit_info = null,
             .restart_count = 0,
             .started_at = null,
+            .restart_after = null,
         };
     }
 
     /// Record that the service process has been spawned.
     pub fn recordStarted(self: *ServiceStatus, pid: posix.pid_t) void {
-        std.debug.assert(self.state == .stopped or self.state == .starting or self.state == .failed);
+        std.debug.assert(self.state == .stopped or self.state == .starting or
+            self.state == .failed or self.state == .restart_pending);
         self.state = .running;
         self.pid = pid;
         self.exit_info = null;
         self.started_at = std.time.timestamp();
+        self.restart_after = null;
     }
 
     /// Mark the service as starting (before spawn attempt).
     pub fn recordStarting(self: *ServiceStatus) void {
-        std.debug.assert(self.state == .stopped or self.state == .failed);
+        std.debug.assert(self.state == .stopped or self.state == .failed or self.state == .restart_pending);
         self.state = .starting;
+        self.restart_after = null;
+    }
+
+    /// Schedule a restart at a future timestamp. The daemon's main loop
+    /// polls for pending restarts and triggers them when the time arrives.
+    pub fn recordRestartPending(self: *ServiceStatus, restart_at: i64) void {
+        std.debug.assert(self.state == .stopped);
+        self.state = .restart_pending;
+        self.restart_after = restart_at;
+    }
+
+    /// Cancel a pending restart, returning the service to stopped.
+    pub fn cancelRestartPending(self: *ServiceStatus) void {
+        std.debug.assert(self.state == .restart_pending);
+        self.state = .stopped;
+        self.restart_after = null;
     }
 
     /// Mark the service as stopping (graceful shutdown in progress).
@@ -364,4 +385,42 @@ test "ServiceState.label returns correct strings" {
     try std.testing.expectEqualStrings("stopped", ServiceState.stopped.label());
     try std.testing.expectEqualStrings("running", ServiceState.running.label());
     try std.testing.expectEqualStrings("failed", ServiceState.failed.label());
+    try std.testing.expectEqualStrings("restart_pending", ServiceState.restart_pending.label());
+}
+
+// -- restart_pending state transition tests --
+
+test "ServiceStatus transitions: stopped -> restart_pending -> starting -> running" {
+    var status = ServiceStatus.init("web");
+
+    status.recordStarted(10);
+    status.recordExited(.{ .exited = 1 });
+    try std.testing.expectEqual(ServiceState.stopped, status.state);
+
+    status.recordRestartPending(1000);
+    try std.testing.expectEqual(ServiceState.restart_pending, status.state);
+    try std.testing.expectEqual(@as(?i64, 1000), status.restart_after);
+
+    status.recordStarting();
+    try std.testing.expectEqual(ServiceState.starting, status.state);
+    try std.testing.expect(status.restart_after == null);
+
+    status.recordStarted(11);
+    try std.testing.expectEqual(ServiceState.running, status.state);
+    try std.testing.expect(status.restart_after == null);
+}
+
+test "ServiceStatus.recordRestartPending sets timestamp" {
+    var status = ServiceStatus.init("worker");
+    status.recordRestartPending(42);
+    try std.testing.expectEqual(ServiceState.restart_pending, status.state);
+    try std.testing.expectEqual(@as(?i64, 42), status.restart_after);
+}
+
+test "ServiceStatus.recordStarted clears restart_after" {
+    var status = ServiceStatus.init("worker");
+    status.recordRestartPending(42);
+    status.recordStarted(100);
+    try std.testing.expect(status.restart_after == null);
+    try std.testing.expectEqual(ServiceState.running, status.state);
 }

@@ -305,96 +305,75 @@ pub const Server = struct {
         _ = posix.write(fd, fbs.getWritten()) catch {};
     }
 
-    fn handleStatus(self: *Server, fd: posix.fd_t, d: *daemon.Daemon, service: ?[]const u8) void {
-        _ = self;
-        var buf: [8192]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-
+    fn handleStatus(_: *Server, fd: posix.fd_t, d: *daemon.Daemon, service: ?[]const u8) void {
         if (service) |name| {
-            // Check if service exists.
             const found = for (d.cfg.services) |svc| {
                 if (std.mem.eql(u8, svc.name, name)) break true;
             } else false;
 
             if (!found) {
-                writeResponse(fbs.writer(), false, "service not found", null, null) catch return;
-            } else {
-                writeResponse(fbs.writer(), true, null, d, service) catch return;
+                sendSimpleResponse(fd, false, "service not found");
+                return;
             }
-        } else {
-            writeResponse(fbs.writer(), true, null, d, null) catch return;
         }
 
+        var buf: [8192]u8 = undefined;
+        var fbs = std.io.fixedBufferStream(&buf);
+        writeResponse(fbs.writer(), true, null, d, service) catch return;
         _ = posix.write(fd, fbs.getWritten()) catch {};
     }
 
     fn handleRestart(self: *Server, fd: posix.fd_t, d: *daemon.Daemon, service: ?[]const u8) void {
-        var buf: [4096]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-
         const name = service orelse {
-            writeResponse(fbs.writer(), false, "service name required", null, null) catch return;
-            _ = posix.write(fd, fbs.getWritten()) catch {};
+            sendSimpleResponse(fd, false, "service name required");
             return;
         };
 
         const idx = for (d.cfg.services, 0..) |svc, i| {
             if (std.mem.eql(u8, svc.name, name)) break i;
         } else {
-            writeResponse(fbs.writer(), false, "service not found", null, null) catch return;
-            _ = posix.write(fd, fbs.getWritten()) catch {};
+            sendSimpleResponse(fd, false, "service not found");
             return;
         };
 
-        // Restart the service (elevates privileges on Linux).
         self.log.info("IPC restart requested for {s}", .{name});
         d.restartService(idx);
 
-        writeResponse(fbs.writer(), true, "restart requested", null, null) catch return;
-        _ = posix.write(fd, fbs.getWritten()) catch {};
+        sendSimpleResponse(fd, true, "restart requested");
     }
 
     fn handleSignal(self: *Server, fd: posix.fd_t, d: *daemon.Daemon, service: ?[]const u8, sig_str: ?[]const u8) void {
-        var buf: [4096]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-
         const name = service orelse {
-            writeResponse(fbs.writer(), false, "service name required", null, null) catch return;
-            _ = posix.write(fd, fbs.getWritten()) catch {};
+            sendSimpleResponse(fd, false, "service name required");
             return;
         };
 
         const sig_name = sig_str orelse {
-            writeResponse(fbs.writer(), false, "signal name required", null, null) catch return;
-            _ = posix.write(fd, fbs.getWritten()) catch {};
+            sendSimpleResponse(fd, false, "signal name required");
             return;
         };
 
         const sig = parseSignalName(sig_name) orelse {
-            writeResponse(fbs.writer(), false, "unsupported signal", null, null) catch return;
-            _ = posix.write(fd, fbs.getWritten()) catch {};
+            sendSimpleResponse(fd, false, "unsupported signal");
             return;
         };
 
         const idx = for (d.cfg.services, 0..) |svc, i| {
             if (std.mem.eql(u8, svc.name, name)) break i;
         } else {
-            writeResponse(fbs.writer(), false, "service not found", null, null) catch return;
-            _ = posix.write(fd, fbs.getWritten()) catch {};
+            sendSimpleResponse(fd, false, "service not found");
             return;
         };
 
         const pid = d.statuses[idx].pid orelse {
-            writeResponse(fbs.writer(), false, "service not running", null, null) catch return;
-            _ = posix.write(fd, fbs.getWritten()) catch {};
+            sendSimpleResponse(fd, false, "service not running");
             return;
         };
 
         // Elevate to send signal on Linux.
         if (builtin.os.tag == .linux) {
             privilege.elevate() catch {
-                writeResponse(fbs.writer(), false, "privilege elevation failed", null, null) catch return;
-                _ = posix.write(fd, fbs.getWritten()) catch {};
+                sendSimpleResponse(fd, false, "privilege elevation failed");
                 return;
             };
             defer privilege.drop(d.app_user, d.app_group) catch {};
@@ -402,21 +381,22 @@ pub const Server = struct {
 
         d.sendSignalToService(idx, sig) catch |err| {
             self.log.err("signal failed: {s}", .{@errorName(err)});
-            writeResponse(fbs.writer(), false, "signal delivery failed", null, null) catch return;
-            _ = posix.write(fd, fbs.getWritten()) catch {};
+            sendSimpleResponse(fd, false, "signal delivery failed");
             return;
         };
 
         self.log.info("sent signal {s} to {s} pid={d}", .{ sig_name, name, pid });
-        writeResponse(fbs.writer(), true, "signal sent", null, null) catch return;
-        _ = posix.write(fd, fbs.getWritten()) catch {};
+        sendSimpleResponse(fd, true, "signal sent");
     }
 
-    fn writeError(self: *Server, fd: posix.fd_t, message: []const u8) void {
-        _ = self;
+    fn writeError(_: *Server, fd: posix.fd_t, message: []const u8) void {
+        sendSimpleResponse(fd, false, message);
+    }
+
+    fn sendSimpleResponse(fd: posix.fd_t, success: bool, message: []const u8) void {
         var buf: [1024]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&buf);
-        writeResponse(fbs.writer(), false, message, null, null) catch return;
+        writeResponse(fbs.writer(), success, message, null, null) catch return;
         _ = posix.write(fd, fbs.getWritten()) catch {};
     }
 };

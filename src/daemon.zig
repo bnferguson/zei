@@ -389,6 +389,12 @@ pub const Daemon = struct {
                 return;
             };
         }
+        defer if (builtin.os.tag == .linux) {
+            privilege.drop(self.app_user, self.app_group) catch |err| {
+                self.log.err("CRITICAL: drop failed after signal forwarding: {s} — initiating shutdown", .{@errorName(err)});
+                if (!self.shutting_down) self.shutdownServices();
+            };
+        };
 
         for (self.statuses, 0..) |*status, i| {
             if (status.state == .running) {
@@ -399,14 +405,6 @@ pub const Daemon = struct {
                     };
                 }
             }
-        }
-
-        if (builtin.os.tag == .linux) {
-            privilege.drop(self.app_user, self.app_group) catch |err| {
-                self.log.err("CRITICAL: drop failed after signal forwarding: {s} — initiating shutdown", .{@errorName(err)});
-                if (!self.shutting_down) self.shutdownServices();
-                return;
-            };
         }
     }
 

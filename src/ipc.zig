@@ -608,11 +608,19 @@ test "checkPeerCredentials rejects unauthorized uid on Linux" {
     defer posix.close(@intCast(fds[0]));
     defer posix.close(@intCast(fds[1]));
 
-    const log = logger.Logger.initFromEnv().scoped("test");
-    const our_uid = std.c.getuid();
+    // SO_PEERCRED reports the real UID of the connecting process. Read it
+    // directly rather than using getuid(), since earlier privilege tests
+    // may have changed the real UID via setreuid.
+    var cred: Ucred = undefined;
+    posix.getsockopt(@intCast(fds[0]), posix.SOL.SOCKET, posix.SO.PEERCRED, std.mem.asBytes(&cred)) catch
+        return error.SkipZigTest;
 
-    // If we're not root, using a different app_uid should reject.
-    if (our_uid != 0) {
-        try std.testing.expect(!checkPeerCredentials(@intCast(fds[0]), our_uid + 1, log));
-    }
+    // If the peer UID is 0 (root), it's always authorized — can't test rejection.
+    if (cred.uid == 0) return error.SkipZigTest;
+
+    const log = logger.Logger.initFromEnv().scoped("test");
+
+    // Set app_uid to something that doesn't match the peer — should reject.
+    const non_matching_uid = cred.uid +% 1;
+    try std.testing.expect(!checkPeerCredentials(@intCast(fds[0]), non_matching_uid, log));
 }

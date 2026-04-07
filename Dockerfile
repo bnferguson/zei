@@ -33,6 +33,13 @@ RUN make && chmod +x zombie_maker
 
 # Unit test stage (used by `docker build --target test`)
 FROM builder AS test
+# Create test users/groups so privilege and credential tests run
+# instead of skipping. Mirrors the runtime stage users.
+RUN addgroup -g 1000 appgroup \
+    && adduser -D -u 1000 -G appgroup appuser \
+    && adduser -D -u 1001 worker \
+    && adduser -D -u 1002 monitor \
+    && adduser -D -u 1003 zombie
 CMD ["zig", "build", "test", "--summary", "all"]
 
 # Runtime stage

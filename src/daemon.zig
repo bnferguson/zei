@@ -198,6 +198,9 @@ pub const Daemon = struct {
     /// On exit, cleans up the spawn and records the exit status.
     /// Returns true if the process exited, false if it's still running.
     fn waitForExit(self: *Daemon, idx: usize, pid: posix.pid_t, max_polls: u32) bool {
+        std.debug.assert(idx < self.cfg.services.len);
+        std.debug.assert(self.statuses[idx].pid != null and self.statuses[idx].pid.? == pid);
+
         var polls: u32 = 0;
         while (polls < max_polls) : (polls += 1) {
             var wait_status: c_int = 0;

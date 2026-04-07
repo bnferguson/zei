@@ -280,32 +280,31 @@ pub const Server = struct {
         const req = std.json.parseFromSlice(Request, fba.allocator(), data, .{
             .ignore_unknown_fields = true,
         }) catch {
-            self.writeError(fd, "invalid request format");
+            sendSimpleResponse(fd, false, "invalid request format");
             return;
         };
 
         const cmd = std.meta.stringToEnum(Command, req.value.command) orelse {
-            self.writeError(fd, "unknown command");
+            sendSimpleResponse(fd, false, "unknown command");
             return;
         };
 
         switch (cmd) {
-            .list => self.handleList(fd, d),
-            .status => self.handleStatus(fd, d, req.value.service),
+            .list => handleList(fd, d),
+            .status => handleStatus(fd, d, req.value.service),
             .restart => self.handleRestart(fd, d, req.value.service),
             .signal => self.handleSignal(fd, d, req.value.service, req.value.signal),
         }
     }
 
-    fn handleList(self: *Server, fd: posix.fd_t, d: *daemon.Daemon) void {
-        _ = self;
+    fn handleList(fd: posix.fd_t, d: *daemon.Daemon) void {
         var buf: [8192]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&buf);
         writeResponse(fbs.writer(), true, null, d, null) catch return;
         _ = posix.write(fd, fbs.getWritten()) catch {};
     }
 
-    fn handleStatus(_: *Server, fd: posix.fd_t, d: *daemon.Daemon, service: ?[]const u8) void {
+    fn handleStatus(fd: posix.fd_t, d: *daemon.Daemon, service: ?[]const u8) void {
         if (service) |name| {
             if (d.cfg.getServiceIndex(name) == null) {
                 sendSimpleResponse(fd, false, "service not found");
@@ -379,10 +378,6 @@ pub const Server = struct {
 
         self.log.info("sent signal {s} to {s} pid={d}", .{ sig_name, name, pid });
         sendSimpleResponse(fd, true, "signal sent");
-    }
-
-    fn writeError(_: *Server, fd: posix.fd_t, message: []const u8) void {
-        sendSimpleResponse(fd, false, message);
     }
 
     fn sendSimpleResponse(fd: posix.fd_t, success: bool, message: []const u8) void {

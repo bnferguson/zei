@@ -90,7 +90,7 @@ pub fn main() void {
     defer d.deinit();
 
     // Start IPC server.
-    var ipc_server = ipc.Server.init(log.scoped("ipc")) catch |err| {
+    var ipc_server = ipc.Server.init(log.scoped("ipc"), app_user, app_group) catch |err| {
         log.err("IPC server failed to start: {s}", .{@errorName(err)});
         posix.exit(1);
     };

@@ -181,7 +181,10 @@ test "blockManagedSignals adds signals to blocked set" {
     posix.sigprocmask(posix.SIG.BLOCK, null, &current);
 
     // Verify the mask is no longer empty (signals were added).
-    try std.testing.expect(current != posix.sigemptyset());
+    // Compare as bytes because sigset_t is an array on Linux aarch64,
+    // which does not support == / != operators.
+    const empty_mask = posix.sigemptyset();
+    try std.testing.expect(!std.mem.eql(u8, std.mem.asBytes(&current), std.mem.asBytes(&empty_mask)));
 }
 
 test "unblockManagedSignals removes signals from blocked set" {
@@ -200,7 +203,8 @@ test "unblockManagedSignals removes signals from blocked set" {
     posix.sigprocmask(posix.SIG.BLOCK, null, &current);
 
     // After unblocking, should be back to empty.
-    try std.testing.expectEqual(posix.sigemptyset(), current);
+    const expected_empty = posix.sigemptyset();
+    try std.testing.expectEqualSlices(u8, std.mem.asBytes(&expected_empty), std.mem.asBytes(&current));
 }
 
 test "waitForSignal returns null on timeout" {

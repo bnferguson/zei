@@ -93,7 +93,7 @@ pub fn waitForSignal() ?u8 {
 fn waitForSignalLinux(mask: *const posix.sigset_t) ?u8 {
     var timeout = std.c.timespec{ .sec = 1, .nsec = 0 };
 
-    const sig = c_signal.sigtimedwait(@ptrCast(mask), null, @ptrCast(&timeout));
+    const sig = c.sigtimedwait(@ptrCast(mask), null, @ptrCast(&timeout));
     if (sig > 0) {
         return @intCast(sig);
     }
@@ -101,14 +101,9 @@ fn waitForSignalLinux(mask: *const posix.sigset_t) ?u8 {
     return null;
 }
 
-const c_signal = if (builtin.os.tag == .linux) @cImport({
+const c = @cImport({
     @cInclude("signal.h");
-    @cInclude("time.h");
-}) else struct {};
-
-/// C signal functions, only needed on non-Linux for the polling fallback.
-const c = if (builtin.os.tag == .linux) struct {} else @cImport({
-    @cInclude("signal.h");
+    if (builtin.os.tag == .linux) @cInclude("time.h");
 });
 
 /// Fallback polling implementation for macOS and other platforms.

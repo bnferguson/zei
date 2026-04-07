@@ -25,6 +25,8 @@ pub const PrivilegeError = error{
     SetGidFailed,
     /// The second setXid call failed AND we could not restore the first.
     RestoreFailed,
+    /// A precondition for privilege cycling was violated.
+    InvalidState,
 };
 
 /// Drop effective privileges to the given user/group.
@@ -34,11 +36,11 @@ pub const PrivilegeError = error{
 /// changing effective UID away from root clears CAP_SETGID.
 pub fn drop(username: []const u8, groupname: []const u8) (PrivilegeError || user_lookup.LookupError)!void {
     const creds = try user_lookup.lookup(username, groupname);
-    std.debug.assert(creds.uid != 0); // Dropping to root is a no-op bug.
+    if (creds.uid == 0) return error.InvalidState; // Dropping to root is a no-op bug.
 
     const root_uid = c.geteuid();
     const root_gid = c.getegid();
-    std.debug.assert(root_uid == 0); // Effective UID must be root (from suid or prior elevate).
+    if (root_uid != 0) return error.InvalidState; // Effective UID must be root (from suid or prior elevate).
 
     // GID first — we still have root effective UID and CAP_SETGID.
     if (c.setregid(root_gid, creds.gid) != 0) return error.SetGidFailed;
@@ -58,7 +60,7 @@ pub fn drop(username: []const u8, groupname: []const u8) (PrivilegeError || user
 pub fn elevate() PrivilegeError!void {
     const root_uid = c.getuid();
     const root_gid = c.getgid();
-    std.debug.assert(root_uid == 0); // Real UID must be root (set by prior drop).
+    if (root_uid != 0) return error.InvalidState; // Real UID must be root (set by prior drop).
 
     const prev_uid = c.geteuid();
     const prev_gid = c.getegid();
@@ -74,6 +76,13 @@ pub fn elevate() PrivilegeError!void {
 }
 
 // -- Tests --
+
+test "drop returns InvalidState when target user is root" {
+    // Dropping to root is a no-op bug — the function should reject it.
+    if (c.geteuid() != 0) return error.SkipZigTest;
+    const result = drop("root", "root");
+    try std.testing.expectError(error.InvalidState, result);
+}
 
 test "drop returns UserNotFound for bad username" {
     const result = drop("__no_such_user__", "root");

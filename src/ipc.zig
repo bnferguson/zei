@@ -150,7 +150,10 @@ pub const Server = struct {
         };
         // The security model assumes a non-root app user — directory ownership
         // and SO_PEERCRED checks are meaningless if the app user is root.
-        std.debug.assert(creds.uid != 0);
+        if (creds.uid == 0) {
+            log.err("app user must not be root", .{});
+            return error.PermissionDenied;
+        }
 
         // Ensure the socket directory exists with restrictive permissions.
         // 0o700 = owner only — service users (different UIDs) cannot access.

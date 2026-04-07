@@ -7,8 +7,47 @@ const daemon = @import("daemon.zig");
 const logger = @import("logger.zig");
 const monitor = @import("monitor.zig");
 const privilege = @import("privilege.zig");
+const user_lookup = @import("user_lookup.zig");
 
-pub const socket_path = "/tmp/zei.sock";
+pub const socket_dir = "/run/zei";
+pub const socket_path = socket_dir ++ "/zei.sock";
+
+/// Maximum number of IPC connections to handle per signal loop iteration.
+/// Prevents connection floods from starving signal handling.
+pub const max_connections_per_poll = 4;
+
+// -- Peer credential checking (Linux only) --
+
+/// Linux ucred struct returned by SO_PEERCRED. Defined here rather than via
+/// @cImport because the libc header requires _GNU_SOURCE, and the layout
+/// (pid_t + uid_t + gid_t = i32 + u32 + u32) is stable across Linux.
+const Ucred = extern struct {
+    pid: i32,
+    uid: u32,
+    gid: u32,
+
+    comptime {
+        std.debug.assert(@sizeOf(Ucred) == 12);
+    }
+};
+
+/// Verify the connecting peer is either root or the app user.
+/// Returns true if authorized, false if rejected. On non-Linux, always returns true
+/// (the socket directory permissions provide the access control).
+fn checkPeerCredentials(fd: posix.fd_t, app_uid: posix.uid_t, log: logger.Logger) bool {
+    if (builtin.os.tag != .linux) return true;
+
+    var cred: Ucred = undefined;
+    posix.getsockopt(fd, posix.SOL.SOCKET, posix.SO.PEERCRED, std.mem.asBytes(&cred)) catch {
+        log.err("SO_PEERCRED failed", .{});
+        return false;
+    };
+
+    if (cred.uid == 0 or cred.uid == app_uid) return true;
+
+    log.warn("IPC connection rejected: peer uid={d}", .{cred.uid});
+    return false;
+}
 
 // -- Request / Response protocol (JSON over Unix socket) --
 
@@ -117,8 +156,46 @@ fn writeJsonEscaped(w: anytype, s: []const u8) !void {
 pub const Server = struct {
     server: std.net.Server,
     log: logger.Logger,
+    app_uid: posix.uid_t,
 
-    pub fn init(log: logger.Logger) !Server {
+    pub fn init(log: logger.Logger, app_user: []const u8, app_group: []const u8) !Server {
+        // Resolve the app user's credentials for peer credential checks
+        // and socket directory ownership.
+        const creds = user_lookup.lookup(app_user, app_group) catch |err| {
+            log.err("failed to resolve app user '{s}:{s}': {s}", .{ app_user, app_group, @errorName(err) });
+            return err;
+        };
+
+        // Ensure the socket directory exists with restrictive permissions.
+        // 0o700 = owner only — service users (different UIDs) cannot access.
+        posix.mkdir(socket_dir, 0o700) catch |err| switch (err) {
+            error.PathAlreadyExists => {},
+            else => {
+                log.err("failed to create socket dir {s}: {s}", .{ socket_dir, @errorName(err) });
+                return err;
+            },
+        };
+
+        // Set ownership to the app user and enforce permissions. This runs
+        // while we still have root effective UID (before privilege.drop in main).
+        // Handles both fresh directories and pre-existing ones with wrong perms.
+        {
+            var dir = std.fs.openDirAbsolute(socket_dir, .{}) catch |err| {
+                log.err("cannot open socket dir: {s}", .{@errorName(err)});
+                return err;
+            };
+            defer dir.close();
+
+            posix.fchown(dir.fd, creds.uid, creds.gid) catch |err| {
+                log.err("cannot chown socket dir: {s}", .{@errorName(err)});
+                return err;
+            };
+            dir.chmod(0o700) catch |err| {
+                log.err("cannot chmod socket dir: {s}", .{@errorName(err)});
+                return err;
+            };
+        }
+
         // Remove existing socket.
         std.fs.deleteFileAbsolute(socket_path) catch {};
 
@@ -127,12 +204,14 @@ pub const Server = struct {
             .force_nonblocking = true,
             .kernel_backlog = 8,
         });
+        errdefer server.deinit();
 
         log.info("IPC server listening on {s}", .{socket_path});
 
         return .{
             .server = server,
             .log = log,
+            .app_uid = creds.uid,
         };
     }
 
@@ -162,11 +241,30 @@ pub const Server = struct {
     fn handleConnection(self: *Server, conn: std.net.Server.Connection, d: *daemon.Daemon) void {
         defer conn.stream.close();
 
+        // Verify the connecting process is authorized (root or app user).
+        if (!checkPeerCredentials(conn.stream.handle, self.app_uid, self.log)) return;
+
         // The accepted socket inherits non-blocking from the listener.
         // Switch to blocking for the request/response exchange.
         const nonblock_bit: usize = 1 << @bitOffsetOf(posix.O, "NONBLOCK");
         const fl_flags = posix.fcntl(conn.stream.handle, posix.F.GETFL, 0) catch return;
         _ = posix.fcntl(conn.stream.handle, posix.F.SETFL, fl_flags & ~nonblock_bit) catch return;
+
+        // Set a read timeout to prevent a slow/malicious client from blocking
+        // the daemon's signal loop indefinitely. Drop the connection if it
+        // fails — proceeding without a timeout defeats the purpose.
+        if (builtin.os.tag == .linux) {
+            const timeout = std.os.linux.timeval{ .sec = 2, .usec = 0 };
+            posix.setsockopt(
+                conn.stream.handle,
+                posix.SOL.SOCKET,
+                posix.SO.RCVTIMEO,
+                std.mem.asBytes(&timeout),
+            ) catch {
+                self.log.warn("SO_RCVTIMEO failed, dropping connection", .{});
+                return;
+            };
+        }
 
         // Read request (max 4KB).
         var buf: [4096]u8 = undefined;
@@ -460,4 +558,61 @@ test "writeJsonEscaped handles special chars" {
     try writeJsonEscaped(fbs.writer(), "hello \"world\"\nnewline");
     const output = fbs.getWritten();
     try std.testing.expectEqualStrings("hello \\\"world\\\"\\nnewline", output);
+}
+
+// -- Security hardening tests --
+
+test "socket path is under /run, not /tmp" {
+    try std.testing.expect(std.mem.startsWith(u8, socket_path, "/run/"));
+    try std.testing.expect(!std.mem.startsWith(u8, socket_path, "/tmp/"));
+}
+
+test "socket directory path is prefix of socket path" {
+    try std.testing.expect(std.mem.startsWith(u8, socket_path, socket_dir));
+}
+
+test "max_connections_per_poll is bounded" {
+    try std.testing.expect(max_connections_per_poll > 0);
+    try std.testing.expect(max_connections_per_poll <= 16);
+}
+
+test "checkPeerCredentials allows on non-Linux" {
+    if (builtin.os.tag == .linux) return error.SkipZigTest;
+
+    // On non-Linux, should always return true (directory permissions are the gate).
+    const log = logger.Logger.initFromEnv().scoped("test");
+    try std.testing.expect(checkPeerCredentials(-1, 1000, log));
+}
+
+test "checkPeerCredentials allows matching uid on Linux" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    // Create a Unix socket pair to test SO_PEERCRED.
+    var fds: [2]c_int = undefined;
+    if (std.c.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &fds) != 0) return error.SkipZigTest;
+    defer posix.close(@intCast(fds[0]));
+    defer posix.close(@intCast(fds[1]));
+
+    const log = logger.Logger.initFromEnv().scoped("test");
+    const our_uid = std.c.getuid();
+
+    // Our own UID should be accepted when we set app_uid to match.
+    try std.testing.expect(checkPeerCredentials(@intCast(fds[0]), our_uid, log));
+}
+
+test "checkPeerCredentials rejects unauthorized uid on Linux" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    var fds: [2]c_int = undefined;
+    if (std.c.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &fds) != 0) return error.SkipZigTest;
+    defer posix.close(@intCast(fds[0]));
+    defer posix.close(@intCast(fds[1]));
+
+    const log = logger.Logger.initFromEnv().scoped("test");
+    const our_uid = std.c.getuid();
+
+    // If we're not root, using a different app_uid should reject.
+    if (our_uid != 0) {
+        try std.testing.expect(!checkPeerCredentials(@intCast(fds[0]), our_uid + 1, log));
+    }
 }

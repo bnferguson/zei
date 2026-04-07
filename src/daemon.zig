@@ -284,9 +284,12 @@ pub const Daemon = struct {
     /// Main daemon loop. Blocks on signals and dispatches actions.
     pub fn run(self: *Daemon) void {
         while (!self.shutting_down) {
-            // Poll IPC for pending client connections.
+            // Poll IPC for pending client connections. Capped to prevent
+            // connection floods from starving the signal loop.
             if (self.ipc_server) |srv| {
-                while (srv.tryAccept(self)) {}
+                for (0..ipc.max_connections_per_poll) |_| {
+                    if (!srv.tryAccept(self)) break;
+                }
             }
 
             const sig = signal.waitForSignal() orelse {

@@ -284,13 +284,13 @@ pub const Daemon = struct {
                 } else {
                     svc_log.info("restarting ({d}/unlimited)", .{status.restart_count});
                 }
-                const delay_ms: i64 = @intCast(svc.restartDelayNs() / std.time.ns_per_ms);
+                const delay_ms: i64 = @intCast(@divExact(svc.restartDelayNs(), std.time.ns_per_ms));
                 status.recordRestartPending(std.time.milliTimestamp() + delay_ms);
             },
             .schedule => {
                 const interval_ns = svc.intervalNs() orelse return;
-                svc_log.info("oneshot complete, next run in {d}ms", .{interval_ns / std.time.ns_per_ms});
-                const interval_ms: i64 = @intCast(interval_ns / std.time.ns_per_ms);
+                svc_log.info("oneshot complete, next run in {d}ms", .{@divExact(interval_ns, std.time.ns_per_ms)});
+                const interval_ms: i64 = @intCast(@divExact(interval_ns, std.time.ns_per_ms));
                 status.recordRestartPending(std.time.milliTimestamp() + interval_ms);
             },
             .exhausted => {
@@ -372,15 +372,15 @@ pub const Daemon = struct {
         // Send SIGTERM to all running services.
         for (self.statuses, 0..) |*status, i| {
             if (status.state == .running) {
-                if (status.pid) |pid| {
-                    const svc_log = shutdown_log.forService(self.cfg.services[i].name);
-                    self.sendSignalToService(i, posix.SIG.TERM) catch |err| {
-                        svc_log.err("SIGTERM failed: {s}", .{@errorName(err)});
-                        continue;
-                    };
-                    status.recordStopping();
-                    svc_log.info("sent SIGTERM pid={d}", .{pid});
-                }
+                // Running services always have a pid (set by recordStarted).
+                const pid = status.pid.?;
+                const svc_log = shutdown_log.forService(self.cfg.services[i].name);
+                self.sendSignalToService(i, posix.SIG.TERM) catch |err| {
+                    svc_log.err("SIGTERM failed: {s}", .{@errorName(err)});
+                    continue;
+                };
+                status.recordStopping();
+                svc_log.info("sent SIGTERM pid={d}", .{pid});
             }
         }
 
@@ -400,13 +400,12 @@ pub const Daemon = struct {
             shutdown_log.warn("timeout, sending SIGKILL to remaining services", .{});
             for (self.statuses, 0..) |*status, i| {
                 if (status.state == .running or status.state == .stopping) {
-                    if (status.pid) |pid| {
-                        self.sendSignalToService(i, posix.SIG.KILL) catch |kill_err| {
-                            if (kill_err == error.PermissionDenied) {
-                                shutdown_log.err("SIGKILL failed (EPERM) pid={d}", .{pid});
-                            }
-                        };
-                    }
+                    std.debug.assert(status.pid != null);
+                    self.sendSignalToService(i, posix.SIG.KILL) catch |kill_err| {
+                        if (kill_err == error.PermissionDenied) {
+                            shutdown_log.err("SIGKILL failed (EPERM) pid={d}", .{status.pid.?});
+                        }
+                    };
                 }
             }
             // Final reap.
@@ -425,12 +424,11 @@ pub const Daemon = struct {
 
         for (self.statuses, 0..) |*status, i| {
             if (status.state == .running) {
-                if (status.pid != null) {
-                    self.sendSignalToService(i, sig) catch |err| {
-                        self.log.forService(self.cfg.services[i].name)
-                            .err("signal {d} failed: {s}", .{ sig, @errorName(err) });
-                    };
-                }
+                std.debug.assert(status.pid != null);
+                self.sendSignalToService(i, sig) catch |err| {
+                    self.log.forService(self.cfg.services[i].name)
+                        .err("signal {d} failed: {s}", .{ sig, @errorName(err) });
+                };
             }
         }
     }

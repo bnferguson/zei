@@ -4,12 +4,10 @@ const Yaml = @import("yaml").Yaml;
 const config_size_max = 1024 * 1024; // 1 MiB
 const max_services = 256;
 
-const ns_per_ms: u64 = 1_000_000;
-const ns_per_s: u64 = 1_000_000_000;
-const ns_per_m: u64 = 60 * ns_per_s;
+const ns_per_m: u64 = 60 * std.time.ns_per_s;
 const ns_per_h: u64 = 60 * ns_per_m;
 
-const default_restart_delay_ns: u64 = ns_per_s;
+const default_restart_delay_ns: u64 = std.time.ns_per_s;
 
 pub const RestartPolicy = enum {
     always,
@@ -223,9 +221,9 @@ pub fn parseDuration(s: []const u8) ?u64 {
     const multiplier: u64 = if (std.mem.eql(u8, suffix, "ns"))
         1
     else if (std.mem.eql(u8, suffix, "ms"))
-        ns_per_ms
+        std.time.ns_per_ms
     else if (std.mem.eql(u8, suffix, "s"))
-        ns_per_s
+        std.time.ns_per_s
     else if (std.mem.eql(u8, suffix, "m"))
         ns_per_m
     else if (std.mem.eql(u8, suffix, "h"))

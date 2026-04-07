@@ -475,7 +475,7 @@ pub fn sendRequest(allocator: std.mem.Allocator, req: Request) !Response {
 
     // Connect via Unix socket.
     const fd = try posix.socket(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
-    errdefer posix.close(fd);
+    defer posix.close(fd);
     try posix.connect(fd, &addr.any, addr.getOsSockLen());
 
     // Serialize request.
@@ -506,7 +506,6 @@ pub fn sendRequest(allocator: std.mem.Allocator, req: Request) !Response {
     const resp_buf = try allocator.alloc(u8, 8192);
     errdefer allocator.free(resp_buf);
     const n = try posix.read(fd, resp_buf);
-    posix.close(fd);
 
     return .{ .buf = resp_buf, .len = n, .allocator = allocator };
 }

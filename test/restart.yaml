@@ -5,7 +5,7 @@ services:
   crasher:
     command: ["/bin/sh", "-c", "echo 'crashing'; exit 1"]
     user: appuser
-    group: appuser
+    group: appgroup
     restart: on-failure
     max_restarts: 3
     restart_delay: 1s
@@ -14,7 +14,7 @@ services:
   clean_exit:
     command: ["/bin/sh", "-c", "echo 'done'; exit 0"]
     user: appuser
-    group: appuser
+    group: appgroup
     restart: on-failure
     max_restarts: 3
     restart_delay: 1s
@@ -23,7 +23,7 @@ services:
   always_restart:
     command: ["/bin/sh", "-c", "echo 'restarting'; exit 0"]
     user: appuser
-    group: appuser
+    group: appgroup
     restart: always
     max_restarts: 5
     restart_delay: 1s

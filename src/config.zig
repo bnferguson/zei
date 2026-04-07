@@ -143,8 +143,8 @@ fn parseService(alloc: std.mem.Allocator, name: []const u8, map: Yaml.Map) !Serv
     return .{
         .name = try alloc.dupe(u8, name),
         .command = try parseStringList(alloc, map.get("command")) orelse return LoadError.ParseFailed,
-        .user = try dupeScalarOr(alloc, map.get("user"), "root"),
-        .group = try dupeScalarOr(alloc, map.get("group"), "root"),
+        .user = try dupeScalar(alloc, map.get("user")) orelse return LoadError.ParseFailed,
+        .group = try dupeScalar(alloc, map.get("group")) orelse return LoadError.ParseFailed,
         .working_dir = try dupeScalar(alloc, map.get("working_dir")),
         .environment = try parseEnvironment(alloc, map.get("environment")),
         .max_restarts = parseUint(u32, map.get("max_restarts")) orelse 0,
@@ -303,6 +303,30 @@ test "load parses json_logs flag" {
 test "load returns error for missing file" {
     const result = load(std.testing.allocator, "nonexistent.yaml");
     try std.testing.expectError(LoadError.FileNotFound, result);
+}
+
+test "load rejects service missing user field" {
+    const yaml =
+        \\version: "1.0"
+        \\services:
+        \\  broken:
+        \\    command: ["/bin/true"]
+        \\    group: appuser
+    ;
+    const result = loadFromSource(std.testing.allocator, yaml);
+    try std.testing.expectError(LoadError.ParseFailed, result);
+}
+
+test "load rejects service missing group field" {
+    const yaml =
+        \\version: "1.0"
+        \\services:
+        \\  broken:
+        \\    command: ["/bin/true"]
+        \\    user: appuser
+    ;
+    const result = loadFromSource(std.testing.allocator, yaml);
+    try std.testing.expectError(LoadError.ParseFailed, result);
 }
 
 test "Service.restartDelayNs returns parsed delay" {

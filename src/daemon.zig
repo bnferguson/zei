@@ -134,19 +134,17 @@ pub const Daemon = struct {
                 return;
             };
         }
+        defer if (builtin.os.tag == .linux) {
+            privilege.drop(self.app_user, self.app_group) catch |err| {
+                svc_log.err("CRITICAL: drop failed after restart: {s} — initiating shutdown", .{@errorName(err)});
+                if (!self.shutting_down) self.shutdownServices();
+            };
+        };
 
         // If the service is currently running, stop it first.
         self.stopService(idx);
 
         self.startService(idx);
-
-        if (builtin.os.tag == .linux) {
-            privilege.drop(self.app_user, self.app_group) catch |err| {
-                svc_log.err("CRITICAL: drop failed after restart: {s} — initiating shutdown", .{@errorName(err)});
-                if (!self.shutting_down) self.shutdownServices();
-                return;
-            };
-        }
     }
 
     /// Stop a running service by sending SIGTERM and waiting for exit.

@@ -68,6 +68,14 @@ pub const Config = struct {
         }
         return null;
     }
+
+    /// Look up a service index by name. Returns null if not found.
+    pub fn getServiceIndex(self: *const Config, name: []const u8) ?usize {
+        for (self.services, 0..) |svc, i| {
+            if (std.mem.eql(u8, svc.name, name)) return i;
+        }
+        return null;
+    }
 };
 
 pub const LoadError = error{

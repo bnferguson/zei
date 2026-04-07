@@ -307,11 +307,7 @@ pub const Server = struct {
 
     fn handleStatus(_: *Server, fd: posix.fd_t, d: *daemon.Daemon, service: ?[]const u8) void {
         if (service) |name| {
-            const found = for (d.cfg.services) |svc| {
-                if (std.mem.eql(u8, svc.name, name)) break true;
-            } else false;
-
-            if (!found) {
+            if (d.cfg.getServiceIndex(name) == null) {
                 sendSimpleResponse(fd, false, "service not found");
                 return;
             }
@@ -329,9 +325,7 @@ pub const Server = struct {
             return;
         };
 
-        const idx = for (d.cfg.services, 0..) |svc, i| {
-            if (std.mem.eql(u8, svc.name, name)) break i;
-        } else {
+        const idx = d.cfg.getServiceIndex(name) orelse {
             sendSimpleResponse(fd, false, "service not found");
             return;
         };
@@ -358,9 +352,7 @@ pub const Server = struct {
             return;
         };
 
-        const idx = for (d.cfg.services, 0..) |svc, i| {
-            if (std.mem.eql(u8, svc.name, name)) break i;
-        } else {
+        const idx = d.cfg.getServiceIndex(name) orelse {
             sendSimpleResponse(fd, false, "service not found");
             return;
         };

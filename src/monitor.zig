@@ -66,8 +66,9 @@ pub const ServiceStatus = struct {
         self.restart_after = null;
     }
 
-    /// Schedule a restart at a future timestamp. The daemon's main loop
-    /// polls for pending restarts and triggers them when the time arrives.
+    /// Schedule a restart at a future timestamp (epoch milliseconds).
+    /// The daemon's main loop polls for pending restarts and triggers
+    /// them when the time arrives.
     pub fn recordRestartPending(self: *ServiceStatus, restart_at: i64) void {
         std.debug.assert(self.state == .stopped);
         self.state = .restart_pending;

@@ -237,7 +237,7 @@ pub const Daemon = struct {
     /// Trigger restarts for services whose scheduled restart time has arrived.
     /// Granularity is bounded by the signal loop's ~1s polling interval.
     fn checkPendingRestarts(self: *Daemon) void {
-        const now = std.time.timestamp();
+        const now = std.time.milliTimestamp();
         for (self.statuses, 0..) |*status, i| {
             if (status.state != .restart_pending) continue;
             const restart_at = status.restart_after orelse continue;
@@ -280,14 +280,14 @@ pub const Daemon = struct {
                 } else {
                     svc_log.info("restarting ({d}/unlimited)", .{status.restart_count});
                 }
-                const delay_s: i64 = @intCast(svc.restartDelayNs() / std.time.ns_per_s);
-                status.recordRestartPending(std.time.timestamp() + delay_s);
+                const delay_ms: i64 = @intCast(svc.restartDelayNs() / std.time.ns_per_ms);
+                status.recordRestartPending(std.time.milliTimestamp() + delay_ms);
             },
             .schedule => {
                 const interval_ns = svc.intervalNs() orelse return;
                 svc_log.info("oneshot complete, next run in {d}ms", .{interval_ns / std.time.ns_per_ms});
-                const interval_s: i64 = @intCast(interval_ns / std.time.ns_per_s);
-                status.recordRestartPending(std.time.timestamp() + interval_s);
+                const interval_ms: i64 = @intCast(interval_ns / std.time.ns_per_ms);
+                status.recordRestartPending(std.time.milliTimestamp() + interval_ms);
             },
             .exhausted => {
                 status.recordFailed();
@@ -587,7 +587,7 @@ test "checkPendingRestarts skips future timestamps" {
     defer d.deinit();
 
     // Schedule a restart far in the future.
-    d.statuses[0].recordRestartPending(std.time.timestamp() + 9999);
+    d.statuses[0].recordRestartPending(std.time.milliTimestamp() + 9_999_000);
     d.checkPendingRestarts();
 
     // Should still be pending — not yet triggered.

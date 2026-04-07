@@ -487,12 +487,13 @@ pub const Daemon = struct {
         return env;
     }
 
-    fn sleepNs(ns: u64) void {
-        const secs: u64 = ns / std.time.ns_per_s;
-        const frac: u64 = ns % std.time.ns_per_s;
-        posix.nanosleep(@intCast(secs), @intCast(frac));
-    }
 };
+
+fn sleepNs(ns: u64) void {
+    const secs: u64 = ns / std.time.ns_per_s;
+    const frac: u64 = ns % std.time.ns_per_s;
+    posix.nanosleep(@intCast(secs), @intCast(frac));
+}
 
 // -- Tests --
 

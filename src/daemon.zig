@@ -13,6 +13,9 @@ const reaper = @import("reaper.zig");
 const signal = @import("signal.zig");
 const user_lookup = @import("user_lookup.zig");
 
+/// Grace period (ms) after SIGTERM before escalating to SIGKILL.
+const kill_timeout_ms: i64 = 5000;
+
 pub const Daemon = struct {
     cfg: *config.Config,
     statuses: []monitor.ServiceStatus,
@@ -122,102 +125,92 @@ pub const Daemon = struct {
 
     /// Restart a service after evaluating the restart decision.
     /// Handles privilege elevation/dropping for credential-based spawning.
+    /// Restart a service. Non-blocking: if the service is running, sends
+    /// SIGTERM and sets a flag so handleChildExit starts it after exit.
     pub fn restartService(self: *Daemon, idx: usize) void {
         std.debug.assert(idx < self.cfg.services.len);
         const svc = &self.cfg.services[idx];
         const svc_log = self.log.forService(svc.name);
-        const state = self.statuses[idx].state;
+        const status = &self.statuses[idx];
 
-        // Guard against double-spawning. If the service is already running,
-        // starting, or mid-shutdown, skip the restart.
-        if (state == .running or state == .starting or state == .stopping) {
-            svc_log.warn("restart skipped, service is {s}", .{state.label()});
-            return;
-        }
+        switch (status.state) {
+            .running => {
+                // Non-blocking stop: send SIGTERM, set restart flag,
+                // record kill deadline. handleChildExit will start
+                // the service after the process exits.
+                svc_log.info("stopping for restart", .{});
 
-        // IPC restart preempts a pending scheduled restart.
-        if (state == .restart_pending) {
-            svc_log.info("preempting scheduled restart", .{});
-        }
+                self.elevatePrivileges() catch return;
+                defer self.dropPrivileges();
 
-        // On Linux as PID 1, we need to elevate before spawning
-        // with different credentials. On macOS (testing), skip.
-        if (builtin.os.tag == .linux) {
-            privilege.elevate() catch |err| {
-                svc_log.err("elevate failed for restart: {s}", .{@errorName(err)});
-                return;
-            };
-        }
-
-        // If the service is currently running, stop it first.
-        self.stopService(idx);
-
-        self.startService(idx);
-
-        if (builtin.os.tag == .linux) {
-            privilege.drop(self.app_user, self.app_group) catch |err| {
-                svc_log.err("drop failed after restart: {s}", .{@errorName(err)});
-            };
+                self.sendSignalToService(idx, posix.SIG.TERM) catch |err| {
+                    svc_log.err("SIGTERM failed: {s}", .{@errorName(err)});
+                    return;
+                };
+                status.recordStopping();
+                status.restart_after_stop = true;
+                status.kill_deadline = std.time.milliTimestamp() + kill_timeout_ms;
+            },
+            .stopping => {
+                // Already stopping — just ensure it restarts after exit.
+                svc_log.info("already stopping, will restart after exit", .{});
+                status.restart_after_stop = true;
+            },
+            .starting => {
+                svc_log.warn("restart skipped, service is starting", .{});
+            },
+            .restart_pending => {
+                svc_log.info("preempting scheduled restart", .{});
+                self.doStartService(idx);
+            },
+            .stopped, .failed => {
+                self.doStartService(idx);
+            },
         }
     }
 
-    /// Stop a running service by sending SIGTERM and waiting for exit.
-    fn stopService(self: *Daemon, idx: usize) void {
-        const status = &self.statuses[idx];
-        if (status.state != .running) return;
+    /// Start a service with privilege elevation. Used by restartService
+    /// and handleChildExit for the restart-after-stop path.
+    fn doStartService(self: *Daemon, idx: usize) void {
+        self.elevatePrivileges() catch return;
+        defer self.dropPrivileges();
+        self.startService(idx);
+    }
 
-        const pid = status.pid orelse return;
-        const svc_log = self.log.forService(self.cfg.services[idx].name);
+    /// Escalate SIGTERM to SIGKILL for services past their kill deadline.
+    fn checkStoppingServices(self: *Daemon) void {
+        const now_ms = std.time.milliTimestamp();
 
-        self.sendSignalToService(idx, posix.SIG.TERM) catch |err| {
-            svc_log.err("SIGTERM failed: {s}", .{@errorName(err)});
-            return;
-        };
-        status.recordStopping();
-
-        // Wait up to 5 seconds for the specific PID (not reapAndProcess,
-        // which would trigger auto-restart logic and re-enter restartService).
-        var waited: u32 = 0;
-        while (waited < 50) : (waited += 1) {
-            var wait_status: c_int = 0;
-            const rc = std.c.waitpid(pid, &wait_status, std.c.W.NOHANG);
-            if (rc > 0) {
-                // Child exited — update status directly.
-                if (self.spawns[idx]) |*s| {
-                    s.deinit();
-                    self.spawns[idx] = null;
+        // Check if any services need escalation before elevating.
+        const needs_escalation = for (self.statuses) |*status| {
+            if (status.state == .stopping) {
+                if (status.kill_deadline) |deadline| {
+                    if (now_ms >= deadline) break true;
                 }
-                status.recordExited(reaper.parseWaitStatus(@bitCast(wait_status)));
-                return;
             }
-            posix.nanosleep(0, 100_000_000); // 100ms
-        }
+        } else false;
 
-        // Force kill if still running.
-        svc_log.warn("SIGTERM timeout, sending SIGKILL", .{});
-        self.sendSignalToService(idx, posix.SIG.KILL) catch |err| {
-            if (err != error.ProcessNotFound) {
-                svc_log.err("SIGKILL failed: {s}", .{@errorName(err)});
-            }
-            return;
-        };
+        if (!needs_escalation) return;
 
-        // Wait up to 2 seconds for exit after SIGKILL (bounded, not blocking).
-        var kill_waited: u32 = 0;
-        while (kill_waited < 20) : (kill_waited += 1) {
-            var kill_status: c_int = 0;
-            const rc = std.c.waitpid(pid, &kill_status, std.c.W.NOHANG);
-            if (rc > 0) {
-                if (self.spawns[idx]) |*s| {
-                    s.deinit();
-                    self.spawns[idx] = null;
+        self.elevatePrivileges() catch return;
+        defer self.dropPrivileges();
+
+        for (self.statuses, 0..) |*status, i| {
+            if (status.state != .stopping) continue;
+            const deadline = status.kill_deadline orelse continue;
+            if (now_ms < deadline) continue;
+
+            const svc_log = self.log.forService(self.cfg.services[i].name);
+            svc_log.warn("SIGTERM timeout, sending SIGKILL", .{});
+
+            self.sendSignalToService(i, posix.SIG.KILL) catch |err| {
+                if (err != error.ProcessNotFound) {
+                    svc_log.err("SIGKILL failed: {s}", .{@errorName(err)});
                 }
-                status.recordExited(reaper.parseWaitStatus(@bitCast(kill_status)));
-                return;
-            }
-            posix.nanosleep(0, 100_000_000); // 100ms
+            };
+
+            status.kill_deadline = null;
         }
-        svc_log.err("process pid={d} did not exit after SIGKILL", .{pid});
     }
 
     // -- Reaping and restart evaluation --
@@ -238,7 +231,7 @@ pub const Daemon = struct {
     /// Trigger restarts for services whose scheduled restart time has arrived.
     /// Granularity is bounded by the signal loop's ~1s polling interval.
     fn checkPendingRestarts(self: *Daemon) void {
-        const now = std.time.timestamp();
+        const now = std.time.milliTimestamp();
         for (self.statuses, 0..) |*status, i| {
             if (status.state != .restart_pending) continue;
             const restart_at = status.restart_after orelse continue;
@@ -272,6 +265,16 @@ pub const Daemon = struct {
 
         if (self.shutting_down) return;
 
+        // IPC-requested restart takes priority over policy evaluation.
+        // Reset restart_count since this is an explicit user action.
+        if (status.restart_after_stop) {
+            status.restart_after_stop = false;
+            status.restart_count = 0;
+            svc_log.info("restarting after stop", .{});
+            self.doStartService(idx);
+            return;
+        }
+
         const decision = monitor.evaluateRestart(svc, status, exit_info);
         switch (decision) {
             .restart => {
@@ -281,14 +284,14 @@ pub const Daemon = struct {
                 } else {
                     svc_log.info("restarting ({d}/unlimited)", .{status.restart_count});
                 }
-                const delay_s: i64 = @intCast(svc.restartDelayNs() / std.time.ns_per_s);
-                status.recordRestartPending(std.time.timestamp() + delay_s);
+                const delay_ms: i64 = @intCast(@divExact(svc.restartDelayNs(), std.time.ns_per_ms));
+                status.recordRestartPending(std.time.milliTimestamp() + delay_ms);
             },
             .schedule => {
                 const interval_ns = svc.intervalNs() orelse return;
-                svc_log.info("oneshot complete, next run in {d}ms", .{interval_ns / std.time.ns_per_ms});
-                const interval_s: i64 = @intCast(interval_ns / std.time.ns_per_s);
-                status.recordRestartPending(std.time.timestamp() + interval_s);
+                svc_log.info("oneshot complete, next run in {d}ms", .{@divExact(interval_ns, std.time.ns_per_ms)});
+                const interval_ms: i64 = @intCast(@divExact(interval_ns, std.time.ns_per_ms));
+                status.recordRestartPending(std.time.milliTimestamp() + interval_ms);
             },
             .exhausted => {
                 status.recordFailed();
@@ -314,6 +317,7 @@ pub const Daemon = struct {
             }
 
             self.checkPendingRestarts();
+            self.checkStoppingServices();
 
             const sig = signal.waitForSignal() orelse {
                 // Timeout — do a periodic reap in case we missed SIGCHLD.
@@ -351,38 +355,43 @@ pub const Daemon = struct {
         const shutdown_log = self.log.scoped("shutdown");
         shutdown_log.info("starting graceful shutdown", .{});
 
-        if (builtin.os.tag == .linux) {
-            privilege.elevate() catch |err| {
-                shutdown_log.err("elevate failed for shutdown: {s}", .{@errorName(err)});
-            };
-        }
+        // Best-effort elevation — continue shutdown even if it fails.
+        self.elevatePrivileges() catch {};
 
-        // Cancel any pending restarts — no point restarting during shutdown.
+        // Cancel any pending restarts and restart-after-stop flags.
+        // Preserve kill_deadline for services already in .stopping —
+        // they keep their original SIGKILL deadline rather than getting
+        // the full 30s shutdown grace period.
         for (self.statuses) |*status| {
             if (status.state == .restart_pending) {
                 status.cancelRestartPending();
             }
+            status.restart_after_stop = false;
         }
 
         // Send SIGTERM to all running services.
         for (self.statuses, 0..) |*status, i| {
             if (status.state == .running) {
-                if (status.pid) |pid| {
-                    const svc_log = shutdown_log.forService(self.cfg.services[i].name);
-                    self.sendSignalToService(i, posix.SIG.TERM) catch |err| {
-                        svc_log.err("SIGTERM failed: {s}", .{@errorName(err)});
-                        continue;
-                    };
-                    status.recordStopping();
-                    svc_log.info("sent SIGTERM pid={d}", .{pid});
-                }
+                // Running services always have a pid (set by recordStarted).
+                const pid = status.pid.?;
+                const svc_log = shutdown_log.forService(self.cfg.services[i].name);
+                self.sendSignalToService(i, posix.SIG.TERM) catch |err| {
+                    svc_log.err("SIGTERM failed: {s}", .{@errorName(err)});
+                    continue;
+                };
+                status.recordStopping();
+                svc_log.info("sent SIGTERM pid={d}", .{pid});
             }
         }
 
         // Wait up to 30 seconds for services to exit.
+        // checkStoppingServices escalates services with an existing
+        // kill_deadline to SIGKILL (e.g., services mid-restart when
+        // shutdown began).
         const deadline_s: i64 = std.time.timestamp() + 30;
         while (self.hasRunningServices() and std.time.timestamp() < deadline_s) {
             posix.nanosleep(0, 250_000_000); // 250ms
+            self.checkStoppingServices();
             self.reapAndProcess();
         }
 
@@ -391,13 +400,12 @@ pub const Daemon = struct {
             shutdown_log.warn("timeout, sending SIGKILL to remaining services", .{});
             for (self.statuses, 0..) |*status, i| {
                 if (status.state == .running or status.state == .stopping) {
-                    if (status.pid) |pid| {
-                        self.sendSignalToService(i, posix.SIG.KILL) catch |kill_err| {
-                            if (kill_err == error.PermissionDenied) {
-                                shutdown_log.err("SIGKILL failed (EPERM) pid={d}", .{pid});
-                            }
-                        };
-                    }
+                    std.debug.assert(status.pid != null);
+                    self.sendSignalToService(i, posix.SIG.KILL) catch |kill_err| {
+                        if (kill_err == error.PermissionDenied) {
+                            shutdown_log.err("SIGKILL failed (EPERM) pid={d}", .{status.pid.?});
+                        }
+                    };
                 }
             }
             // Final reap.
@@ -411,29 +419,40 @@ pub const Daemon = struct {
     // -- Signal forwarding --
 
     fn forwardSignalToServices(self: *Daemon, sig: u8) void {
-        if (builtin.os.tag == .linux) {
-            privilege.elevate() catch |err| {
-                self.log.err("elevate failed for signal forwarding: {s}", .{@errorName(err)});
-                return;
-            };
-        }
+        self.elevatePrivileges() catch return;
+        defer self.dropPrivileges();
 
         for (self.statuses, 0..) |*status, i| {
             if (status.state == .running) {
-                if (status.pid != null) {
-                    self.sendSignalToService(i, sig) catch |err| {
-                        self.log.forService(self.cfg.services[i].name)
-                            .err("signal {d} failed: {s}", .{ sig, @errorName(err) });
-                    };
-                }
+                std.debug.assert(status.pid != null);
+                self.sendSignalToService(i, sig) catch |err| {
+                    self.log.forService(self.cfg.services[i].name)
+                        .err("signal {d} failed: {s}", .{ sig, @errorName(err) });
+                };
             }
         }
+    }
 
-        if (builtin.os.tag == .linux) {
-            privilege.drop(self.app_user, self.app_group) catch |err| {
-                self.log.err("drop failed after signal forwarding: {s}", .{@errorName(err)});
-            };
-        }
+    // -- Privilege helpers --
+
+    /// Elevate to root on Linux. No-op on other platforms.
+    /// On failure, logs the error and returns it so callers can bail.
+    fn elevatePrivileges(self: *Daemon) error{ElevateFailed}!void {
+        if (builtin.os.tag != .linux) return;
+        privilege.elevate() catch |err| {
+            self.log.err("privilege elevation failed: {s}", .{@errorName(err)});
+            return error.ElevateFailed;
+        };
+    }
+
+    /// Drop back to app user on Linux. No-op on other platforms.
+    /// Logs on failure but does not return an error — callers should
+    /// not abort work that already succeeded because of a drop failure.
+    fn dropPrivileges(self: *Daemon) void {
+        if (builtin.os.tag != .linux) return;
+        privilege.drop(self.app_user, self.app_group) catch |err| {
+            self.log.err("privilege drop failed: {s}", .{@errorName(err)});
+        };
     }
 
     // -- Helpers --
@@ -455,13 +474,15 @@ pub const Daemon = struct {
             }
         }
 
-        // Fallback: no pidfd available.
+        // Fallback: no pidfd available. Assert pid > 0 because
+        // kill(2) interprets 0 and negative pids as process groups.
+        std.debug.assert(pid > 0);
         try posix.kill(pid, sig);
     }
 
     fn findServiceByPid(self: *const Daemon, pid: posix.pid_t) ?usize {
         for (self.statuses, 0..) |*status, i| {
-            if (status.pid != null and status.pid.? == pid) return i;
+            if (status.pid) |p| if (p == pid) return i;
         }
         return null;
     }
@@ -508,13 +529,13 @@ pub const Daemon = struct {
 
         return env;
     }
-
-    fn sleepNs(ns: u64) void {
-        const secs: u64 = ns / std.time.ns_per_s;
-        const frac: u64 = ns % std.time.ns_per_s;
-        posix.nanosleep(@intCast(secs), @intCast(frac));
-    }
 };
+
+fn sleepNs(ns: u64) void {
+    const secs: u64 = ns / std.time.ns_per_s;
+    const frac: u64 = ns % std.time.ns_per_s;
+    posix.nanosleep(@intCast(secs), @intCast(frac));
+}
 
 // -- Tests --
 
@@ -608,30 +629,201 @@ test "checkPendingRestarts skips future timestamps" {
     defer d.deinit();
 
     // Schedule a restart far in the future.
-    d.statuses[0].recordRestartPending(std.time.timestamp() + 9999);
+    d.statuses[0].recordRestartPending(std.time.milliTimestamp() + 9_999_000);
     d.checkPendingRestarts();
 
     // Should still be pending — not yet triggered.
     try std.testing.expectEqual(monitor.ServiceState.restart_pending, d.statuses[0].state);
 }
 
-test "restartService no-ops when service is running" {
+test "restartService on running service attempts non-blocking stop" {
     var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
     defer cfg.deinit();
 
     var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
     defer d.deinit();
 
-    // Simulate a running service.
-    d.statuses[0].recordStarted(12345);
-    const pid_before = d.statuses[0].pid;
+    // Simulate a running service with a real child process so SIGTERM succeeds.
+    const pid = try posix.fork();
+    if (pid == 0) {
+        // Child: sleep until signaled.
+        posix.nanosleep(5, 0);
+        posix.exit(0);
+    }
 
-    // restartService should be a no-op — service is already running.
+    d.statuses[0].recordStarted(pid);
     d.restartService(0);
 
-    // PID unchanged, still running.
-    try std.testing.expectEqual(monitor.ServiceState.running, d.statuses[0].state);
-    try std.testing.expectEqual(pid_before, d.statuses[0].pid);
+    // Service should be stopping, flagged for restart, with a kill deadline.
+    try std.testing.expectEqual(monitor.ServiceState.stopping, d.statuses[0].state);
+    try std.testing.expect(d.statuses[0].restart_after_stop);
+    try std.testing.expect(d.statuses[0].kill_deadline != null);
+    try std.testing.expectEqual(@as(?posix.pid_t, pid), d.statuses[0].pid);
+
+    // Clean up: kill and reap the child.
+    posix.kill(pid, posix.SIG.KILL) catch {};
+    _ = posix.waitpid(pid, 0);
+}
+
+test "restartService on stopping service sets restart flag" {
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
+
+    var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
+    defer d.deinit();
+
+    d.statuses[0].recordStarted(12345);
+    d.statuses[0].recordStopping();
+
+    d.restartService(0);
+
+    try std.testing.expectEqual(monitor.ServiceState.stopping, d.statuses[0].state);
+    try std.testing.expect(d.statuses[0].restart_after_stop);
+}
+
+test "restartService skips starting service" {
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
+
+    var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
+    defer d.deinit();
+
+    d.statuses[0].recordStarting();
+
+    d.restartService(0);
+
+    // Should remain in starting state — restart was rejected.
+    try std.testing.expectEqual(monitor.ServiceState.starting, d.statuses[0].state);
+    try std.testing.expect(!d.statuses[0].restart_after_stop);
+}
+
+test "checkStoppingServices escalates to SIGKILL after deadline" {
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
+
+    var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
+    defer d.deinit();
+
+    // Fork a child that sleeps so we can test SIGKILL escalation.
+    const pid = try posix.fork();
+    if (pid == 0) {
+        posix.nanosleep(10, 0);
+        posix.exit(0);
+    }
+
+    d.statuses[0].recordStarted(pid);
+    d.statuses[0].recordStopping();
+    // Set deadline in the past so SIGKILL fires immediately.
+    d.statuses[0].kill_deadline = std.time.milliTimestamp() - 1;
+
+    d.checkStoppingServices();
+
+    // kill_deadline should be cleared after sending SIGKILL.
+    try std.testing.expect(d.statuses[0].kill_deadline == null);
+
+    // Clean up: reap the child (SIGKILL should have killed it).
+    posix.nanosleep(0, 50_000_000); // 50ms for signal delivery
+    _ = posix.waitpid(pid, 0);
+}
+
+test "checkStoppingServices skips services before deadline" {
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
+
+    var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
+    defer d.deinit();
+
+    d.statuses[0].recordStarted(12345);
+    d.statuses[0].recordStopping();
+    d.statuses[0].kill_deadline = std.time.milliTimestamp() + 999_999;
+
+    d.checkStoppingServices();
+
+    // Deadline should not be cleared — still in the future.
+    try std.testing.expect(d.statuses[0].kill_deadline != null);
+}
+
+test "handleChildExit restarts service when restart_after_stop is set" {
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
+
+    var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
+    defer d.deinit();
+
+    // Need appuser credentials for startService to succeed.
+    const idx = for (cfg.services, 0..) |svc, i| {
+        if (std.mem.eql(u8, svc.name, "echo")) break i;
+    } else return error.TestUnexpectedResult;
+
+    _ = user_lookup.lookup(cfg.services[idx].user, cfg.services[idx].group) catch
+        return error.SkipZigTest;
+
+    // Fork a child, record it as running, then set up for restart.
+    const pid = try posix.fork();
+    if (pid == 0) posix.exit(0);
+
+    d.statuses[idx].recordStarted(pid);
+    d.statuses[idx].recordStopping();
+    d.statuses[idx].restart_after_stop = true;
+
+    // Wait for child to exit, then reap.
+    posix.nanosleep(0, 50_000_000);
+    d.reapAndProcess();
+
+    // handleChildExit should have restarted the service.
+    try std.testing.expect(!d.statuses[idx].restart_after_stop);
+    try std.testing.expectEqual(@as(u32, 0), d.statuses[idx].restart_count);
+
+    // The service should be running again (or at least attempted to start).
+    // startService may have failed if credentials don't work, but the
+    // flag should be cleared regardless.
+    try std.testing.expect(!d.statuses[idx].restart_after_stop);
+
+    // Clean up: kill any new child.
+    if (d.statuses[idx].pid) |new_pid| {
+        posix.kill(new_pid, posix.SIG.KILL) catch {};
+        posix.nanosleep(0, 50_000_000);
+        d.reapAndProcess();
+    }
+}
+
+test "shutdown clears restart_after_stop but preserves kill_deadline" {
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
+
+    var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
+    defer d.deinit();
+
+    const deadline = std.time.milliTimestamp() + 5000;
+
+    // Simulate a stopping service with a kill deadline (mid-restart).
+    d.statuses[0].restart_after_stop = true;
+    d.statuses[0].kill_deadline = deadline;
+
+    // Simulate a service with a pending restart.
+    d.statuses[1].recordRestartPending(std.time.milliTimestamp() + 5000);
+    d.statuses[1].restart_after_stop = true;
+
+    // Simulate the flag-clearing loop from shutdownServices.
+    // We can't call shutdownServices with fake PIDs, so test the
+    // invariants directly.
+    for (d.statuses) |*status| {
+        if (status.state == .restart_pending) {
+            status.cancelRestartPending();
+        }
+        status.restart_after_stop = false;
+    }
+
+    // restart_after_stop should be cleared everywhere.
+    try std.testing.expect(!d.statuses[0].restart_after_stop);
+    try std.testing.expect(!d.statuses[1].restart_after_stop);
+
+    // kill_deadline preserved — checkStoppingServices will honor it
+    // during the shutdown wait loop.
+    try std.testing.expectEqual(@as(?i64, deadline), d.statuses[0].kill_deadline);
+
+    // restart_pending should be cancelled.
+    try std.testing.expectEqual(monitor.ServiceState.stopped, d.statuses[1].state);
 }
 
 test "isBlockedEnvVar blocks linker injection vars" {

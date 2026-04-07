@@ -9,10 +9,6 @@ pub const ServiceState = enum {
     stopping,
     restart_pending,
     failed,
-
-    pub fn label(self: ServiceState) [:0]const u8 {
-        return @tagName(self);
-    }
 };
 
 /// How a child process exited.
@@ -39,6 +35,12 @@ pub const ServiceStatus = struct {
     restart_count: u32,
     started_at: ?i64,
     restart_after: ?i64 = null,
+    /// When true, the service should be restarted after it exits from
+    /// the .stopping state. Set by IPC restart of a running service.
+    restart_after_stop: bool = false,
+    /// Epoch milliseconds deadline for escalating SIGTERM to SIGKILL.
+    /// Set when entering .stopping state, cleared after SIGKILL or exit.
+    kill_deadline: ?i64 = null,
 
     pub fn init(name: []const u8) ServiceStatus {
         return .{
@@ -61,6 +63,8 @@ pub const ServiceStatus = struct {
         self.exit_info = null;
         self.started_at = std.time.timestamp();
         self.restart_after = null;
+        self.restart_after_stop = false;
+        self.kill_deadline = null;
     }
 
     /// Mark the service as starting (before spawn attempt).
@@ -70,8 +74,9 @@ pub const ServiceStatus = struct {
         self.restart_after = null;
     }
 
-    /// Schedule a restart at a future timestamp. The daemon's main loop
-    /// polls for pending restarts and triggers them when the time arrives.
+    /// Schedule a restart at a future timestamp (epoch milliseconds).
+    /// The daemon's main loop polls for pending restarts and triggers
+    /// them when the time arrives.
     pub fn recordRestartPending(self: *ServiceStatus, restart_at: i64) void {
         std.debug.assert(self.state == .stopped);
         self.state = .restart_pending;
@@ -83,6 +88,7 @@ pub const ServiceStatus = struct {
         std.debug.assert(self.state == .restart_pending);
         self.state = .stopped;
         self.restart_after = null;
+        self.restart_after_stop = false;
     }
 
     /// Mark the service as stopping (graceful shutdown in progress).
@@ -98,6 +104,7 @@ pub const ServiceStatus = struct {
         self.exit_info = info;
         self.pid = null;
         self.state = .stopped;
+        self.kill_deadline = null;
     }
 
     /// Mark the service as failed (e.g., after exhausting restart attempts).
@@ -150,8 +157,10 @@ pub fn evaluateRestart(
         return .stop;
     }
 
-    // If the daemon is shutting down (stopping state), never restart.
-    if (status.state == .stopping) return .stop;
+    // Note: by the time evaluateRestart is called, recordExited has
+    // already transitioned the state to .stopped. The shutting_down
+    // check and restart_after_stop flag in handleChildExit handle
+    // the cases where we should not follow restart policy.
 
     const should_restart = switch (svc.restart) {
         .always => true,
@@ -349,13 +358,17 @@ test "max_restarts: zero means unlimited" {
 
 // -- evaluateRestart tests: stopping state --
 
-test "stopping state: never restart regardless of policy" {
+test "evaluateRestart after recordExited follows policy" {
+    // evaluateRestart is always called after recordExited, which sets
+    // state to .stopped. Stopping-vs-restart is handled by the
+    // restart_after_stop flag in handleChildExit, not by evaluateRestart.
     const svc = testService(.{ .restart = .always });
     var status = ServiceStatus.init("test-svc");
     status.recordStarted(1);
     status.recordStopping();
+    status.recordExited(.{ .exited = 0 });
     const decision = evaluateRestart(&svc, &status, .{ .exited = 0 });
-    try std.testing.expectEqual(RestartDecision.stop, decision);
+    try std.testing.expectEqual(RestartDecision.restart, decision);
 }
 
 // -- evaluateRestart tests: oneshot --
@@ -381,13 +394,13 @@ test "oneshot with interval: schedule even on failure" {
     try std.testing.expectEqual(RestartDecision.schedule, decision);
 }
 
-// -- ServiceState.label tests --
+// -- ServiceState @tagName tests --
 
-test "ServiceState.label returns correct strings" {
-    try std.testing.expectEqualStrings("stopped", ServiceState.stopped.label());
-    try std.testing.expectEqualStrings("running", ServiceState.running.label());
-    try std.testing.expectEqualStrings("failed", ServiceState.failed.label());
-    try std.testing.expectEqualStrings("restart_pending", ServiceState.restart_pending.label());
+test "ServiceState @tagName returns correct strings" {
+    try std.testing.expectEqualStrings("stopped", @tagName(ServiceState.stopped));
+    try std.testing.expectEqualStrings("running", @tagName(ServiceState.running));
+    try std.testing.expectEqualStrings("failed", @tagName(ServiceState.failed));
+    try std.testing.expectEqualStrings("restart_pending", @tagName(ServiceState.restart_pending));
 }
 
 // -- restart_pending state transition tests --

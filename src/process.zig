@@ -134,7 +134,9 @@ test "spawn returns non-zero exit code" {
 }
 
 test "spawn with uid/gid as root" {
-    const c = @cImport({@cInclude("unistd.h");});
+    const c = @cImport({
+        @cInclude("unistd.h");
+    });
     if (c.geteuid() != 0) return error.SkipZigTest;
 
     const user_lookup = @import("user_lookup.zig");

@@ -60,7 +60,6 @@ fn toCString(buf: *[max_name_length + 1]u8, s: []const u8) ?[*:0]const u8 {
     if (s.len > max_name_length) return null;
     @memcpy(buf[0..s.len], s);
     buf[s.len] = 0;
-    std.debug.assert(buf[s.len] == 0);
     return @ptrCast(buf);
 }
 

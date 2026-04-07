@@ -56,10 +56,6 @@ pub const Command = enum {
     status,
     restart,
     signal,
-
-    pub fn parse(s: []const u8) ?Command {
-        return std.meta.stringToEnum(Command, s);
-    }
 };
 
 pub const Request = struct {
@@ -142,18 +138,7 @@ fn writeServiceStatus(w: anytype, svc: *const config.Service, status: *const mon
     try w.writeByte('}');
 }
 
-fn writeJsonEscaped(w: anytype, s: []const u8) !void {
-    for (s) |c| {
-        switch (c) {
-            '"' => try w.writeAll("\\\""),
-            '\\' => try w.writeAll("\\\\"),
-            '\n' => try w.writeAll("\\n"),
-            '\r' => try w.writeAll("\\r"),
-            '\t' => try w.writeAll("\\t"),
-            else => try w.writeByte(c),
-        }
-    }
-}
+const writeJsonEscaped = logger.writeJsonEscaped;
 
 // -- IPC Server --
 
@@ -295,121 +280,96 @@ pub const Server = struct {
         const req = std.json.parseFromSlice(Request, fba.allocator(), data, .{
             .ignore_unknown_fields = true,
         }) catch {
-            self.writeError(fd, "invalid request format");
+            sendSimpleResponse(fd, false, "invalid request format");
             return;
         };
 
-        const cmd = Command.parse(req.value.command) orelse {
-            self.writeError(fd, "unknown command");
+        const cmd = std.meta.stringToEnum(Command, req.value.command) orelse {
+            sendSimpleResponse(fd, false, "unknown command");
             return;
         };
 
         switch (cmd) {
-            .list => self.handleList(fd, d),
-            .status => self.handleStatus(fd, d, req.value.service),
+            .list => handleList(fd, d),
+            .status => handleStatus(fd, d, req.value.service),
             .restart => self.handleRestart(fd, d, req.value.service),
             .signal => self.handleSignal(fd, d, req.value.service, req.value.signal),
         }
     }
 
-    fn handleList(self: *Server, fd: posix.fd_t, d: *daemon.Daemon) void {
-        _ = self;
+    fn handleList(fd: posix.fd_t, d: *daemon.Daemon) void {
         var buf: [8192]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&buf);
         writeResponse(fbs.writer(), true, null, d, null) catch return;
         _ = posix.write(fd, fbs.getWritten()) catch {};
     }
 
-    fn handleStatus(self: *Server, fd: posix.fd_t, d: *daemon.Daemon, service: ?[]const u8) void {
-        _ = self;
-        var buf: [8192]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-
+    fn handleStatus(fd: posix.fd_t, d: *daemon.Daemon, service: ?[]const u8) void {
         if (service) |name| {
-            // Check if service exists.
-            const found = for (d.cfg.services) |svc| {
-                if (std.mem.eql(u8, svc.name, name)) break true;
-            } else false;
-
-            if (!found) {
-                writeResponse(fbs.writer(), false, "service not found", null, null) catch return;
-            } else {
-                writeResponse(fbs.writer(), true, null, d, service) catch return;
+            if (d.cfg.getServiceIndex(name) == null) {
+                sendSimpleResponse(fd, false, "service not found");
+                return;
             }
-        } else {
-            writeResponse(fbs.writer(), true, null, d, null) catch return;
         }
 
+        var buf: [8192]u8 = undefined;
+        var fbs = std.io.fixedBufferStream(&buf);
+        writeResponse(fbs.writer(), true, null, d, service) catch return;
         _ = posix.write(fd, fbs.getWritten()) catch {};
     }
 
     fn handleRestart(self: *Server, fd: posix.fd_t, d: *daemon.Daemon, service: ?[]const u8) void {
-        var buf: [4096]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-
         const name = service orelse {
-            writeResponse(fbs.writer(), false, "service name required", null, null) catch return;
-            _ = posix.write(fd, fbs.getWritten()) catch {};
+            sendSimpleResponse(fd, false, "service name required");
             return;
         };
 
-        const idx = for (d.cfg.services, 0..) |svc, i| {
-            if (std.mem.eql(u8, svc.name, name)) break i;
-        } else {
-            writeResponse(fbs.writer(), false, "service not found", null, null) catch return;
-            _ = posix.write(fd, fbs.getWritten()) catch {};
+        const idx = d.cfg.getServiceIndex(name) orelse {
+            sendSimpleResponse(fd, false, "service not found");
             return;
         };
 
-        // Restart the service (elevates privileges on Linux).
+        if (d.statuses[idx].state == .starting) {
+            sendSimpleResponse(fd, false, "service is starting, try again later");
+            return;
+        }
+
         self.log.info("IPC restart requested for {s}", .{name});
         d.restartService(idx);
 
-        writeResponse(fbs.writer(), true, "restart requested", null, null) catch return;
-        _ = posix.write(fd, fbs.getWritten()) catch {};
+        sendSimpleResponse(fd, true, "restart requested");
     }
 
     fn handleSignal(self: *Server, fd: posix.fd_t, d: *daemon.Daemon, service: ?[]const u8, sig_str: ?[]const u8) void {
-        var buf: [4096]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-
         const name = service orelse {
-            writeResponse(fbs.writer(), false, "service name required", null, null) catch return;
-            _ = posix.write(fd, fbs.getWritten()) catch {};
+            sendSimpleResponse(fd, false, "service name required");
             return;
         };
 
         const sig_name = sig_str orelse {
-            writeResponse(fbs.writer(), false, "signal name required", null, null) catch return;
-            _ = posix.write(fd, fbs.getWritten()) catch {};
+            sendSimpleResponse(fd, false, "signal name required");
             return;
         };
 
         const sig = parseSignalName(sig_name) orelse {
-            writeResponse(fbs.writer(), false, "unsupported signal", null, null) catch return;
-            _ = posix.write(fd, fbs.getWritten()) catch {};
+            sendSimpleResponse(fd, false, "unsupported signal");
             return;
         };
 
-        const idx = for (d.cfg.services, 0..) |svc, i| {
-            if (std.mem.eql(u8, svc.name, name)) break i;
-        } else {
-            writeResponse(fbs.writer(), false, "service not found", null, null) catch return;
-            _ = posix.write(fd, fbs.getWritten()) catch {};
+        const idx = d.cfg.getServiceIndex(name) orelse {
+            sendSimpleResponse(fd, false, "service not found");
             return;
         };
 
         const pid = d.statuses[idx].pid orelse {
-            writeResponse(fbs.writer(), false, "service not running", null, null) catch return;
-            _ = posix.write(fd, fbs.getWritten()) catch {};
+            sendSimpleResponse(fd, false, "service not running");
             return;
         };
 
         // Elevate to send signal on Linux.
         if (builtin.os.tag == .linux) {
             privilege.elevate() catch {
-                writeResponse(fbs.writer(), false, "privilege elevation failed", null, null) catch return;
-                _ = posix.write(fd, fbs.getWritten()) catch {};
+                sendSimpleResponse(fd, false, "privilege elevation failed");
                 return;
             };
             defer privilege.drop(d.app_user, d.app_group) catch {};
@@ -417,21 +377,18 @@ pub const Server = struct {
 
         d.sendSignalToService(idx, sig) catch |err| {
             self.log.err("signal failed: {s}", .{@errorName(err)});
-            writeResponse(fbs.writer(), false, "signal delivery failed", null, null) catch return;
-            _ = posix.write(fd, fbs.getWritten()) catch {};
+            sendSimpleResponse(fd, false, "signal delivery failed");
             return;
         };
 
         self.log.info("sent signal {s} to {s} pid={d}", .{ sig_name, name, pid });
-        writeResponse(fbs.writer(), true, "signal sent", null, null) catch return;
-        _ = posix.write(fd, fbs.getWritten()) catch {};
+        sendSimpleResponse(fd, true, "signal sent");
     }
 
-    fn writeError(self: *Server, fd: posix.fd_t, message: []const u8) void {
-        _ = self;
+    fn sendSimpleResponse(fd: posix.fd_t, success: bool, message: []const u8) void {
         var buf: [1024]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&buf);
-        writeResponse(fbs.writer(), false, message, null, null) catch return;
+        writeResponse(fbs.writer(), success, message, null, null) catch return;
         _ = posix.write(fd, fbs.getWritten()) catch {};
     }
 };
@@ -540,15 +497,15 @@ test "writeResponse with service statuses" {
     try std.testing.expect(std.mem.indexOf(u8, output, "\"state\":\"stopped\"") != null);
 }
 
-test "Command.parse valid commands" {
-    try std.testing.expectEqual(Command.list, Command.parse("list").?);
-    try std.testing.expectEqual(Command.status, Command.parse("status").?);
-    try std.testing.expectEqual(Command.restart, Command.parse("restart").?);
-    try std.testing.expectEqual(Command.signal, Command.parse("signal").?);
+test "Command enum parses valid commands" {
+    try std.testing.expectEqual(Command.list, std.meta.stringToEnum(Command, "list").?);
+    try std.testing.expectEqual(Command.status, std.meta.stringToEnum(Command, "status").?);
+    try std.testing.expectEqual(Command.restart, std.meta.stringToEnum(Command, "restart").?);
+    try std.testing.expectEqual(Command.signal, std.meta.stringToEnum(Command, "signal").?);
 }
 
-test "Command.parse invalid command" {
-    try std.testing.expect(Command.parse("invalid") == null);
+test "Command enum rejects invalid command" {
+    try std.testing.expect(std.meta.stringToEnum(Command, "invalid") == null);
 }
 
 test "parseSignalName valid signals" {

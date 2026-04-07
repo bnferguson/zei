@@ -57,8 +57,8 @@ pub const Logger = struct {
 
     /// Create a logger configured from ZEI_LOG_LEVEL and ZEI_LOG_FORMAT env vars.
     pub fn initFromEnv() Logger {
-        const level_str: ?[]const u8 = if (std.posix.getenv("ZEI_LOG_LEVEL")) |v| v else null;
-        const format_str: ?[]const u8 = if (std.posix.getenv("ZEI_LOG_FORMAT")) |v| v else null;
+        const level_str = std.posix.getenv("ZEI_LOG_LEVEL");
+        const format_str = std.posix.getenv("ZEI_LOG_FORMAT");
         return init(
             stderrWriter(),
             Level.parse(level_str),
@@ -110,7 +110,7 @@ pub const Logger = struct {
         self.write(.err, fmt, args);
     }
 
-    fn write(self: Logger, level: Level, comptime fmt: []const u8, args: anytype) void {
+    pub fn write(self: Logger, level: Level, comptime fmt: []const u8, args: anytype) void {
         if (@intFromEnum(level) < @intFromEnum(self.level)) return;
 
         var msg_buf: [max_line_length]u8 = undefined;
@@ -149,33 +149,21 @@ pub const Logger = struct {
         w.print("\",\"level\":\"{s}\"", .{level.label()}) catch return;
         if (component) |c| {
             w.writeAll(",\"component\":\"") catch return;
-            writeJsonEscaped(w, c);
+            writeJsonEscapedNoFail(w, c);
             w.writeByte('"') catch return;
         }
         if (service) |s| {
             w.writeAll(",\"service\":\"") catch return;
-            writeJsonEscaped(w, s);
+            writeJsonEscapedNoFail(w, s);
             w.writeByte('"') catch return;
         }
         w.writeAll(",\"msg\":\"") catch return;
-        writeJsonEscaped(w, msg);
+        writeJsonEscapedNoFail(w, msg);
         w.writeAll("\"}") catch return;
     }
 
-    fn writeJsonEscaped(w: anytype, s: []const u8) void {
-        for (s) |c| {
-            switch (c) {
-                '"' => w.writeAll("\\\"") catch return,
-                '\\' => w.writeAll("\\\\") catch return,
-                '\n' => w.writeAll("\\n") catch return,
-                '\r' => w.writeAll("\\r") catch return,
-                '\t' => w.writeAll("\\t") catch return,
-                0x00...0x08, 0x0b, 0x0c, 0x0e...0x1f, 0x7f => {
-                    w.print("\\u{x:0>4}", .{c}) catch return;
-                },
-                else => w.writeByte(c) catch return,
-            }
-        }
+    fn writeJsonEscapedNoFail(w: anytype, s: []const u8) void {
+        writeJsonEscaped(w, s) catch {};
     }
 
     fn writeTimestamp(w: anytype) void {
@@ -197,6 +185,24 @@ pub const Logger = struct {
         }) catch {};
     }
 };
+
+/// Write a JSON-escaped string. Handles quotes, backslashes,
+/// common whitespace, and control characters (as \u00XX).
+pub fn writeJsonEscaped(w: anytype, s: []const u8) @TypeOf(w).Error!void {
+    for (s) |c| {
+        switch (c) {
+            '"' => try w.writeAll("\\\""),
+            '\\' => try w.writeAll("\\\\"),
+            '\n' => try w.writeAll("\\n"),
+            '\r' => try w.writeAll("\\r"),
+            '\t' => try w.writeAll("\\t"),
+            0x00...0x08, 0x0b, 0x0c, 0x0e...0x1f, 0x7f => {
+                try w.print("\\u{x:0>4}", .{c});
+            },
+            else => try w.writeByte(c),
+        }
+    }
+}
 
 // -- Tests --
 

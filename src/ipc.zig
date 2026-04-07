@@ -329,6 +329,11 @@ pub const Server = struct {
             return;
         };
 
+        if (d.statuses[idx].state == .starting) {
+            sendSimpleResponse(fd, false, "service is starting, try again later");
+            return;
+        }
+
         self.log.info("IPC restart requested for {s}", .{name});
         d.restartService(idx);
 

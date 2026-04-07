@@ -35,6 +35,12 @@ pub const ServiceStatus = struct {
     restart_count: u32,
     started_at: ?i64,
     restart_after: ?i64 = null,
+    /// When true, the service should be restarted after it exits from
+    /// the .stopping state. Set by IPC restart of a running service.
+    restart_after_stop: bool = false,
+    /// Epoch milliseconds deadline for escalating SIGTERM to SIGKILL.
+    /// Set when entering .stopping state, cleared after SIGKILL or exit.
+    kill_deadline: ?i64 = null,
 
     pub fn init(name: []const u8) ServiceStatus {
         return .{
@@ -57,6 +63,8 @@ pub const ServiceStatus = struct {
         self.exit_info = null;
         self.started_at = std.time.timestamp();
         self.restart_after = null;
+        self.restart_after_stop = false;
+        self.kill_deadline = null;
     }
 
     /// Mark the service as starting (before spawn attempt).
@@ -80,6 +88,7 @@ pub const ServiceStatus = struct {
         std.debug.assert(self.state == .restart_pending);
         self.state = .stopped;
         self.restart_after = null;
+        self.restart_after_stop = false;
     }
 
     /// Mark the service as stopping (graceful shutdown in progress).
@@ -95,6 +104,7 @@ pub const ServiceStatus = struct {
         self.exit_info = info;
         self.pid = null;
         self.state = .stopped;
+        self.kill_deadline = null;
     }
 
     /// Mark the service as failed (e.g., after exhausting restart attempts).

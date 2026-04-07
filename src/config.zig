@@ -190,10 +190,6 @@ fn dupeScalar(alloc: std.mem.Allocator, value: ?Yaml.Value) !?[]const u8 {
     return try alloc.dupe(u8, s);
 }
 
-fn dupeScalarOr(alloc: std.mem.Allocator, value: ?Yaml.Value, default: []const u8) ![]const u8 {
-    return try dupeScalar(alloc, value) orelse default;
-}
-
 fn parseUint(comptime T: type, value: ?Yaml.Value) ?T {
     const s = (value orelse return null).asScalar() orelse return null;
     return std.fmt.parseInt(T, s, 10) catch null;

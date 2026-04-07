@@ -436,6 +436,10 @@ pub fn sendRequest(allocator: std.mem.Allocator, req: Request) !Response {
     errdefer posix.close(fd);
     try posix.connect(fd, &addr.any, addr.getOsSockLen());
 
+    // Set a read timeout so the CLI doesn't hang if the daemon stalls.
+    const timeout = std.c.timeval{ .sec = 5, .usec = 0 };
+    posix.setsockopt(fd, posix.SOL.SOCKET, posix.SO.RCVTIMEO, std.mem.asBytes(&timeout)) catch {};
+
     // Serialize request.
     var buf: [1024]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);

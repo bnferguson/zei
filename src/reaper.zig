@@ -1,5 +1,6 @@
 const std = @import("std");
 const posix = std.posix;
+const logger = @import("logger.zig");
 const monitor = @import("monitor.zig");
 
 pub const ReapResult = struct {
@@ -30,7 +31,13 @@ pub fn reapChildren(buf: []ReapResult) usize {
             switch (posix.errno(rc)) {
                 .CHILD => break, // No children exist — normal for PID 1.
                 .INTR => continue, // Interrupted by signal — retry.
-                else => unreachable, // EINVAL: bad flags (programming error).
+                else => |e| {
+                    // Unexpected errno — log and stop reaping this round
+                    // rather than crashing PID 1.
+                    const log = logger.Logger.initFromEnv().scoped("reaper");
+                    log.err("unexpected waitpid errno: {s}", .{@tagName(e)});
+                    break;
+                },
             }
         }
 

@@ -142,7 +142,9 @@ pub const Daemon = struct {
 
         if (builtin.os.tag == .linux) {
             privilege.drop(self.app_user, self.app_group) catch |err| {
-                svc_log.err("drop failed after restart: {s}", .{@errorName(err)});
+                svc_log.err("CRITICAL: drop failed after restart: {s} — initiating shutdown", .{@errorName(err)});
+                if (!self.shutting_down) self.shutdownServices();
+                return;
             };
         }
     }
@@ -401,7 +403,9 @@ pub const Daemon = struct {
 
         if (builtin.os.tag == .linux) {
             privilege.drop(self.app_user, self.app_group) catch |err| {
-                self.log.err("drop failed after signal forwarding: {s}", .{@errorName(err)});
+                self.log.err("CRITICAL: drop failed after signal forwarding: {s} — initiating shutdown", .{@errorName(err)});
+                if (!self.shutting_down) self.shutdownServices();
+                return;
             };
         }
     }

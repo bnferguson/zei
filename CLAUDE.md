@@ -28,7 +28,7 @@ E2E tests (`test/e2e.sh`) run on the host, spinning up Docker containers and ver
 zei has two modes determined at startup in `main.zig`:
 
 1. **Daemon mode** (PID 1): blocks signals, loads config, spawns services, drops privileges, enters the signal loop.
-2. **CLI mode** (not PID 1): sends JSON commands to the daemon over a Unix socket (`/tmp/zei.sock`), or falls back to reading the config file directly.
+2. **CLI mode** (not PID 1): sends JSON commands to the daemon over a Unix socket (`/run/zei/zei.sock`), or falls back to reading the config file directly.
 
 ### Key modules
 
@@ -54,7 +54,7 @@ The binary runs suid-root in containers. Real UID is parked at root while effect
 
 ### IPC protocol
 
-JSON over Unix socket at `/tmp/zei.sock`. Request: `{"command":"...", "service":"...", "signal":"..."}`. Response: `{"success":bool, "message":"...", "services":{...}}`. The server is non-blocking for accept but switches connections to blocking for the request/response exchange.
+JSON over Unix socket at `/run/zei/zei.sock`. Request: `{"command":"...", "service":"...", "signal":"..."}`. Response: `{"success":bool, "message":"...", "services":{...}}`. The server is non-blocking for accept but switches connections to blocking for the request/response exchange.
 
 ## Dependencies
 

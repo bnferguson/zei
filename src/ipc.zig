@@ -408,8 +408,8 @@ pub const Server = struct {
                 _ = posix.write(fd, fbs.getWritten()) catch {};
                 return;
             };
-            defer privilege.drop(d.app_user, d.app_group) catch {};
         }
+        defer if (builtin.os.tag == .linux) self.dropOrShutdown(d);
 
         posix.kill(pid, sig) catch |err| {
             self.log.err("signal failed: {s}", .{@errorName(err)});
@@ -421,6 +421,16 @@ pub const Server = struct {
         self.log.info("sent signal {s} to {s} pid={d}", .{ sig_name, name, pid });
         writeResponse(fbs.writer(), true, "signal sent", null, null) catch return;
         _ = posix.write(fd, fbs.getWritten()) catch {};
+    }
+
+    /// Drop privileges after an elevated operation. If drop fails, the daemon
+    /// must not continue running as root — initiate immediate shutdown.
+    fn dropOrShutdown(self: *Server, d: *daemon.Daemon) void {
+        privilege.drop(d.app_user, d.app_group) catch |err| {
+            self.log.err("CRITICAL: privilege drop failed: {s} — initiating shutdown", .{@errorName(err)});
+            if (!d.shutting_down) d.shutdownServices();
+            return;
+        };
     }
 
     fn writeError(self: *Server, fd: posix.fd_t, message: []const u8) void {

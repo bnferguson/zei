@@ -259,15 +259,22 @@ pub const Server = struct {
             };
         }
 
-        // Read request (max 4KB).
+        // Read request in a loop until EOF or buffer full (max 4KB).
+        // The client calls shutdown(.send) after writing, so we read
+        // until EOF to handle any kernel-level message fragmentation.
         var buf: [4096]u8 = undefined;
-        const n = posix.read(conn.stream.handle, &buf) catch |err| {
-            self.log.err("IPC read error: {s}", .{@errorName(err)});
-            return;
-        };
-        if (n == 0) return;
+        var total: usize = 0;
+        while (total < buf.len) {
+            const n = posix.read(conn.stream.handle, buf[total..]) catch |err| {
+                self.log.err("IPC read error: {s}", .{@errorName(err)});
+                return;
+            };
+            if (n == 0) break;
+            total += n;
+        }
+        if (total == 0) return;
 
-        self.dispatchRequest(buf[0..n], conn.stream.handle, d);
+        self.dispatchRequest(buf[0..total], conn.stream.handle, d);
     }
 
     fn dispatchRequest(self: *Server, data: []const u8, fd: posix.fd_t, d: *daemon.Daemon) void {
@@ -295,10 +302,7 @@ pub const Server = struct {
     }
 
     fn handleList(fd: posix.fd_t, d: *daemon.Daemon) void {
-        var buf: [8192]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-        writeResponse(fbs.writer(), true, null, d, null) catch return;
-        _ = posix.write(fd, fbs.getWritten()) catch {};
+        writeAllocResponse(fd, d, null);
     }
 
     fn handleStatus(fd: posix.fd_t, d: *daemon.Daemon, service: ?[]const u8) void {
@@ -309,10 +313,19 @@ pub const Server = struct {
             }
         }
 
-        var buf: [8192]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-        writeResponse(fbs.writer(), true, null, d, service) catch return;
-        _ = posix.write(fd, fbs.getWritten()) catch {};
+        writeAllocResponse(fd, d, service);
+    }
+
+    /// Serialize a response with service data using a dynamically-sized buffer.
+    /// Falls back to a simple error response if allocation fails.
+    fn writeAllocResponse(fd: posix.fd_t, d: *daemon.Daemon, service: ?[]const u8) void {
+        var list: std.ArrayList(u8) = .empty;
+        defer list.deinit(d.allocator);
+        writeResponse(list.writer(d.allocator), true, null, d, service) catch {
+            sendSimpleResponse(fd, false, "response serialization failed");
+            return;
+        };
+        _ = posix.write(fd, list.items) catch {};
     }
 
     fn handleRestart(self: *Server, fd: posix.fd_t, d: *daemon.Daemon, service: ?[]const u8) void {
@@ -447,13 +460,20 @@ pub fn sendRequest(allocator: std.mem.Allocator, req: Request) !Response {
     // Shutdown write side so the server knows we're done.
     posix.shutdown(fd, .send) catch {};
 
-    // Read response into allocated buffer.
-    const resp_buf = try allocator.alloc(u8, 8192);
-    errdefer allocator.free(resp_buf);
-    const n = try posix.read(fd, resp_buf);
+    // Read response in a loop until EOF. Start with 8KB — enough for
+    // most responses — and grow if needed.
+    var resp: std.ArrayList(u8) = .empty;
+    errdefer resp.deinit(allocator);
+    var read_buf: [4096]u8 = undefined;
+    while (true) {
+        const n = try posix.read(fd, &read_buf);
+        if (n == 0) break;
+        try resp.appendSlice(allocator, read_buf[0..n]);
+    }
     posix.close(fd);
 
-    return .{ .buf = resp_buf, .len = n, .allocator = allocator };
+    const owned = try resp.toOwnedSlice(allocator);
+    return .{ .buf = owned, .len = owned.len, .allocator = allocator };
 }
 
 // -- Tests --

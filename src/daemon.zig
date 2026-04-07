@@ -140,29 +140,16 @@ pub const Daemon = struct {
                 // the service after the process exits.
                 svc_log.info("stopping for restart", .{});
 
-                if (builtin.os.tag == .linux) {
-                    privilege.elevate() catch |err| {
-                        svc_log.err("elevate failed: {s}", .{@errorName(err)});
-                        return;
-                    };
-                }
+                self.elevatePrivileges() catch return;
+                defer self.dropPrivileges();
 
                 self.sendSignalToService(idx, posix.SIG.TERM) catch |err| {
                     svc_log.err("SIGTERM failed: {s}", .{@errorName(err)});
-                    if (builtin.os.tag == .linux) {
-                        privilege.drop(self.app_user, self.app_group) catch {};
-                    }
                     return;
                 };
                 status.recordStopping();
                 status.restart_after_stop = true;
                 status.kill_deadline = std.time.milliTimestamp() + kill_timeout_ms;
-
-                if (builtin.os.tag == .linux) {
-                    privilege.drop(self.app_user, self.app_group) catch |err| {
-                        svc_log.err("drop failed: {s}", .{@errorName(err)});
-                    };
-                }
             },
             .stopping => {
                 // Already stopping — just ensure it restarts after exit.
@@ -185,27 +172,29 @@ pub const Daemon = struct {
     /// Start a service with privilege elevation. Used by restartService
     /// and handleChildExit for the restart-after-stop path.
     fn doStartService(self: *Daemon, idx: usize) void {
-        if (builtin.os.tag == .linux) {
-            privilege.elevate() catch |err| {
-                self.log.forService(self.cfg.services[idx].name)
-                    .err("elevate failed: {s}", .{@errorName(err)});
-                return;
-            };
-        }
-
+        self.elevatePrivileges() catch return;
+        defer self.dropPrivileges();
         self.startService(idx);
-
-        if (builtin.os.tag == .linux) {
-            privilege.drop(self.app_user, self.app_group) catch |err| {
-                self.log.forService(self.cfg.services[idx].name)
-                    .err("drop failed: {s}", .{@errorName(err)});
-            };
-        }
     }
 
     /// Escalate SIGTERM to SIGKILL for services past their kill deadline.
     fn checkStoppingServices(self: *Daemon) void {
         const now_ms = std.time.milliTimestamp();
+
+        // Check if any services need escalation before elevating.
+        const needs_escalation = for (self.statuses) |*status| {
+            if (status.state == .stopping) {
+                if (status.kill_deadline) |deadline| {
+                    if (now_ms >= deadline) break true;
+                }
+            }
+        } else false;
+
+        if (!needs_escalation) return;
+
+        self.elevatePrivileges() catch return;
+        defer self.dropPrivileges();
+
         for (self.statuses, 0..) |*status, i| {
             if (status.state != .stopping) continue;
             const deadline = status.kill_deadline orelse continue;
@@ -214,22 +203,11 @@ pub const Daemon = struct {
             const svc_log = self.log.forService(self.cfg.services[i].name);
             svc_log.warn("SIGTERM timeout, sending SIGKILL", .{});
 
-            if (builtin.os.tag == .linux) {
-                privilege.elevate() catch |err| {
-                    svc_log.err("elevate for SIGKILL: {s}", .{@errorName(err)});
-                    continue;
-                };
-            }
-
             self.sendSignalToService(i, posix.SIG.KILL) catch |err| {
                 if (err != error.ProcessNotFound) {
                     svc_log.err("SIGKILL failed: {s}", .{@errorName(err)});
                 }
             };
-
-            if (builtin.os.tag == .linux) {
-                privilege.drop(self.app_user, self.app_group) catch {};
-            }
 
             status.kill_deadline = null;
         }
@@ -377,11 +355,8 @@ pub const Daemon = struct {
         const shutdown_log = self.log.scoped("shutdown");
         shutdown_log.info("starting graceful shutdown", .{});
 
-        if (builtin.os.tag == .linux) {
-            privilege.elevate() catch |err| {
-                shutdown_log.err("elevate failed for shutdown: {s}", .{@errorName(err)});
-            };
-        }
+        // Best-effort elevation — continue shutdown even if it fails.
+        self.elevatePrivileges() catch {};
 
         // Cancel any pending restarts and restart-after-stop flags.
         // Shutdown manages its own SIGKILL timeline.
@@ -440,12 +415,8 @@ pub const Daemon = struct {
     // -- Signal forwarding --
 
     fn forwardSignalToServices(self: *Daemon, sig: u8) void {
-        if (builtin.os.tag == .linux) {
-            privilege.elevate() catch |err| {
-                self.log.err("elevate failed for signal forwarding: {s}", .{@errorName(err)});
-                return;
-            };
-        }
+        self.elevatePrivileges() catch return;
+        defer self.dropPrivileges();
 
         for (self.statuses, 0..) |*status, i| {
             if (status.state == .running) {
@@ -457,12 +428,28 @@ pub const Daemon = struct {
                 }
             }
         }
+    }
 
-        if (builtin.os.tag == .linux) {
-            privilege.drop(self.app_user, self.app_group) catch |err| {
-                self.log.err("drop failed after signal forwarding: {s}", .{@errorName(err)});
-            };
-        }
+    // -- Privilege helpers --
+
+    /// Elevate to root on Linux. No-op on other platforms.
+    /// On failure, logs the error and returns it so callers can bail.
+    fn elevatePrivileges(self: *Daemon) error{ElevateFailed}!void {
+        if (builtin.os.tag != .linux) return;
+        privilege.elevate() catch |err| {
+            self.log.err("privilege elevation failed: {s}", .{@errorName(err)});
+            return error.ElevateFailed;
+        };
+    }
+
+    /// Drop back to app user on Linux. No-op on other platforms.
+    /// Logs on failure but does not return an error — callers should
+    /// not abort work that already succeeded because of a drop failure.
+    fn dropPrivileges(self: *Daemon) void {
+        if (builtin.os.tag != .linux) return;
+        privilege.drop(self.app_user, self.app_group) catch |err| {
+            self.log.err("privilege drop failed: {s}", .{@errorName(err)});
+        };
     }
 
     // -- Helpers --

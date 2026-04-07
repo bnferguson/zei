@@ -11,10 +11,14 @@ zei is a lightweight container init system (PID 1 supervisor) written in Zig. It
 zei is **Linux-only** — it's a container init system and will not compile on other platforms. A `comptime` assertion in `main.zig` enforces this. Build and test via Docker:
 
 ```sh
+make test                          # run unit tests in Docker (fast)
+make test-all                      # run unit + e2e tests in Docker
 make docker-build                  # build Docker image
 make docker-test                   # run unit tests inside Linux container
 make docker-e2e                    # run end-to-end tests via test/e2e.sh
 ```
+
+**Always run `make test` to verify changes. Run `make test-all` before opening PRs** to include the slower e2e suite.
 
 Zig version: **0.15.2**. The project links libc (`link_libc = true`) for POSIX user/group lookup (`getpwnam`, `getgrnam`), `setreuid`/`setregid`, and `sigtimedwait`.
 

@@ -3,13 +3,14 @@ DOCKER_IMAGE = zei
 DOCKER_TAG = latest
 CONFIG_FILE = example/zei.yaml
 
-.PHONY: build test clean docker-build docker-test docker-run docker-e2e docker-shell help
+.PHONY: build test clean docker-build docker-test docker-run docker-e2e docker-shell help test-all
 
 build:
 	zig build
 
-test:
-	zig build test --summary all
+test: docker-test
+
+test-all: docker-test docker-e2e
 
 clean:
 	rm -rf zig-out .zig-cache
@@ -43,7 +44,8 @@ docker-clean:
 help:
 	@echo "Available targets:"
 	@echo "  build          - Build zei with zig build"
-	@echo "  test           - Run unit tests"
+	@echo "  test           - Run unit tests in Docker"
+	@echo "  test-all       - Run unit + e2e tests in Docker"
 	@echo "  clean          - Remove build artifacts"
 	@echo "  docker-build   - Build Docker image"
 	@echo "  docker-test    - Run unit tests in Docker (Linux)"

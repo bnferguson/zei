@@ -1,5 +1,12 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const posix = std.posix;
+
+comptime {
+    if (builtin.os.tag != .linux) {
+        @compileError("zei is a Linux container init system and does not support other platforms. Run tests via: make docker-test");
+    }
+}
 
 const cli = @import("cli.zig");
 const config = @import("config.zig");
@@ -11,7 +18,7 @@ const signal = @import("signal.zig");
 
 const default_config_path = "/etc/zei/zei.yaml";
 const default_app_user = "appuser";
-const default_app_group = "appuser";
+const default_app_group = "appgroup";
 
 fn writeStderr(msg: []const u8) void {
     _ = posix.write(posix.STDERR_FILENO, msg) catch {};

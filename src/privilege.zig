@@ -92,6 +92,14 @@ test "drop and elevate round-trip" {
     // Verify appuser exists (skip if not in Docker).
     _ = user_lookup.lookup("appuser", "appgroup") catch return error.SkipZigTest;
 
+    // Restore uid/gid to root on exit so we don't contaminate other tests.
+    // Deferred rather than at the bottom — a failed assertion mid-test
+    // would otherwise leave the process in a half-privileged state.
+    defer {
+        std.debug.assert(c.setreuid(0, 0) == 0);
+        std.debug.assert(c.setregid(0, 0) == 0);
+    }
+
     // Drop to appuser — effective becomes non-root, real becomes root.
     try drop("appuser", "appgroup");
     try std.testing.expectEqual(@as(c_uint, 1000), c.geteuid());

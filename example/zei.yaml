@@ -4,7 +4,7 @@ services:
   echo:
     command: ["/bin/sh", "-c", "while true; do echo 'echo service running'; sleep 5; done"]
     user: appuser
-    group: appuser
+    group: appgroup
     restart: always
     max_restarts: 3
     restart_delay: 5s
@@ -40,7 +40,7 @@ services:
   signal_handler:
     command: ["/bin/sh", "/example/signal-handler.sh"]
     user: appuser
-    group: appuser
+    group: appgroup
     restart: always
     max_restarts: 3
     restart_delay: 5s
@@ -48,7 +48,7 @@ services:
   json_logger:
     command: ["/bin/sh", "/example/json-logger.sh"]
     user: appuser
-    group: appuser
+    group: appgroup
     restart: always
     max_restarts: 3
     restart_delay: 5s

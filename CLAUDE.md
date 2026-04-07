@@ -11,10 +11,14 @@ zei is a lightweight container init system (PID 1 supervisor) written in Zig. It
 zei is **Linux-only** — it's a container init system and will not compile on other platforms. A `comptime` assertion in `main.zig` enforces this. Build and test via Docker:
 
 ```sh
+make test                          # run unit tests in Docker (fast)
+make test-all                      # run unit + e2e tests in Docker
 make docker-build                  # build Docker image
 make docker-test                   # run unit tests inside Linux container
 make docker-e2e                    # run end-to-end tests via test/e2e.sh
 ```
+
+**Always run `make test` to verify changes. Run `make test-all` before opening PRs** to include the slower e2e suite.
 
 Zig version: **0.15.2**. The project links libc (`link_libc = true`) for POSIX user/group lookup (`getpwnam`, `getgrnam`), `setreuid`/`setregid`, and `sigtimedwait`.
 
@@ -27,7 +31,7 @@ E2E tests (`test/e2e.sh`) run on the host, spinning up Docker containers and ver
 zei has two modes determined at startup in `main.zig`:
 
 1. **Daemon mode** (PID 1): blocks signals, loads config, spawns services, drops privileges, enters the signal loop.
-2. **CLI mode** (not PID 1): sends JSON commands to the daemon over a Unix socket (`/tmp/zei.sock`), or falls back to reading the config file directly.
+2. **CLI mode** (not PID 1): sends JSON commands to the daemon over a Unix socket (`/run/zei/zei.sock`), or falls back to reading the config file directly.
 
 ### Key modules
 
@@ -53,7 +57,7 @@ The binary runs suid-root in containers. Real UID is parked at root while effect
 
 ### IPC protocol
 
-JSON over Unix socket at `/tmp/zei.sock`. Request: `{"command":"...", "service":"...", "signal":"..."}`. Response: `{"success":bool, "message":"...", "services":{...}}`. The server is non-blocking for accept but switches connections to blocking for the request/response exchange.
+JSON over Unix socket at `/run/zei/zei.sock`. Request: `{"command":"...", "service":"...", "signal":"..."}`. Response: `{"success":bool, "message":"...", "services":{...}}`. The server is non-blocking for accept but switches connections to blocking for the request/response exchange.
 
 ## Dependencies
 

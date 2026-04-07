@@ -355,7 +355,9 @@ pub const Daemon = struct {
         shutdown_log.info("starting graceful shutdown", .{});
 
         // Best-effort elevation — continue shutdown even if it fails.
-        self.elevatePrivileges() catch {};
+        self.elevatePrivileges() catch {
+            shutdown_log.warn("privilege elevation failed, shutdown signals may not be delivered", .{});
+        };
 
         // Cancel any pending restarts and restart-after-stop flags.
         // Preserve kill_deadline for services already in .stopping —

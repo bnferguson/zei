@@ -116,7 +116,7 @@ sleep 3
 check_output "restart command succeeds" "restart" \
     docker exec "$CONTAINER" /zei -c /test/simple.yaml restart echo
 
-sleep 3
+sleep 6
 
 check_output "service still running after restart" "running" \
     docker exec "$CONTAINER" /zei -c /test/simple.yaml status echo

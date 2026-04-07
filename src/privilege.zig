@@ -1,18 +1,18 @@
-///! Privilege management for a suid-root binary.
-///!
-///! zei runs in non-root containers with the suid bit set on the binary.
-///! This gives us: real UID = container user (non-root), effective UID = root.
-///! We use setreuid/setregid to swap root between real and effective positions,
-///! allowing us to elevate for privileged operations (spawning services as
-///! different users) and drop back afterward. This provides user isolation
-///! across services without running the container as root.
-///!
-///! The typical cycle is:
-///!   start:   real=container_user, effective=root (suid)
-///!   drop:    real=root, effective=service_user
-///!   elevate: real=service_user, effective=root
-///!   drop:    real=root, effective=next_service_user
-///!   ...
+//! Privilege management for a suid-root binary.
+//!
+//! zei runs in non-root containers with the suid bit set on the binary.
+//! This gives us: real UID = container user (non-root), effective UID = root.
+//! We use setreuid/setregid to swap root between real and effective positions,
+//! allowing us to elevate for privileged operations (spawning services as
+//! different users) and drop back afterward. This provides user isolation
+//! across services without running the container as root.
+//!
+//! The typical cycle is:
+//!   start:   real=container_user, effective=root (suid)
+//!   drop:    real=root, effective=service_user
+//!   elevate: real=service_user, effective=root
+//!   drop:    real=root, effective=next_service_user
+//!   ...
 const std = @import("std");
 const user_lookup = @import("user_lookup.zig");
 

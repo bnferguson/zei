@@ -4,7 +4,7 @@ services:
   echo:
     command: ["/bin/sh", "-c", "trap 'exit 0' TERM; while true; do echo 'echo running'; sleep 2 & wait; done"]
     user: appuser
-    group: appuser
+    group: appgroup
     restart: always
     max_restarts: 3
     restart_delay: 1s

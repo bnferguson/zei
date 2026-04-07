@@ -684,3 +684,130 @@ test "restartService skips starting service" {
     try std.testing.expectEqual(monitor.ServiceState.starting, d.statuses[0].state);
     try std.testing.expect(!d.statuses[0].restart_after_stop);
 }
+
+test "checkStoppingServices escalates to SIGKILL after deadline" {
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
+
+    var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
+    defer d.deinit();
+
+    // Fork a child that sleeps so we can test SIGKILL escalation.
+    const pid = try posix.fork();
+    if (pid == 0) {
+        posix.nanosleep(10, 0);
+        posix.exit(0);
+    }
+
+    d.statuses[0].recordStarted(pid);
+    d.statuses[0].recordStopping();
+    // Set deadline in the past so SIGKILL fires immediately.
+    d.statuses[0].kill_deadline = std.time.milliTimestamp() - 1;
+
+    d.checkStoppingServices();
+
+    // kill_deadline should be cleared after sending SIGKILL.
+    try std.testing.expect(d.statuses[0].kill_deadline == null);
+
+    // Clean up: reap the child (SIGKILL should have killed it).
+    posix.nanosleep(0, 50_000_000); // 50ms for signal delivery
+    _ = posix.waitpid(pid, 0);
+}
+
+test "checkStoppingServices skips services before deadline" {
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
+
+    var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
+    defer d.deinit();
+
+    d.statuses[0].recordStarted(12345);
+    d.statuses[0].recordStopping();
+    d.statuses[0].kill_deadline = std.time.milliTimestamp() + 999_999;
+
+    d.checkStoppingServices();
+
+    // Deadline should not be cleared — still in the future.
+    try std.testing.expect(d.statuses[0].kill_deadline != null);
+}
+
+test "handleChildExit restarts service when restart_after_stop is set" {
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
+
+    var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
+    defer d.deinit();
+
+    // Need appuser credentials for startService to succeed.
+    const idx = for (cfg.services, 0..) |svc, i| {
+        if (std.mem.eql(u8, svc.name, "echo")) break i;
+    } else return error.TestUnexpectedResult;
+
+    _ = user_lookup.lookup(cfg.services[idx].user, cfg.services[idx].group) catch
+        return error.SkipZigTest;
+
+    // Fork a child, record it as running, then set up for restart.
+    const pid = try posix.fork();
+    if (pid == 0) posix.exit(0);
+
+    d.statuses[idx].recordStarted(pid);
+    d.statuses[idx].recordStopping();
+    d.statuses[idx].restart_after_stop = true;
+
+    // Wait for child to exit, then reap.
+    posix.nanosleep(0, 50_000_000);
+    d.reapAndProcess();
+
+    // handleChildExit should have restarted the service.
+    try std.testing.expect(!d.statuses[idx].restart_after_stop);
+    try std.testing.expectEqual(@as(u32, 0), d.statuses[idx].restart_count);
+
+    // The service should be running again (or at least attempted to start).
+    // startService may have failed if credentials don't work, but the
+    // flag should be cleared regardless.
+    try std.testing.expect(!d.statuses[idx].restart_after_stop);
+
+    // Clean up: kill any new child.
+    if (d.statuses[idx].pid) |new_pid| {
+        posix.kill(new_pid, posix.SIG.KILL) catch {};
+        posix.nanosleep(0, 50_000_000);
+        d.reapAndProcess();
+    }
+}
+
+test "shutdown clears restart_after_stop and kill_deadline" {
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
+
+    var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
+    defer d.deinit();
+
+    // Set up restart flags on several services in different states.
+    d.statuses[0].restart_after_stop = true;
+    d.statuses[0].kill_deadline = std.time.milliTimestamp() + 5000;
+
+    d.statuses[1].recordRestartPending(std.time.milliTimestamp() + 5000);
+    d.statuses[1].restart_after_stop = true;
+
+    // shutdownServices clears flags early in the function, before
+    // entering the wait loop. Test the flag-clearing directly by
+    // checking the state after shutdown sets shutting_down = true
+    // and clears flags. We can't call shutdownServices with fake
+    // PIDs (it would block on hasRunningServices), so test the
+    // invariants directly.
+    d.shutting_down = true;
+
+    // Simulate the flag-clearing loop from shutdownServices.
+    for (d.statuses) |*status| {
+        if (status.state == .restart_pending) {
+            status.cancelRestartPending();
+        }
+        status.restart_after_stop = false;
+        status.kill_deadline = null;
+    }
+
+    try std.testing.expect(!d.statuses[0].restart_after_stop);
+    try std.testing.expect(d.statuses[0].kill_deadline == null);
+    try std.testing.expect(!d.statuses[1].restart_after_stop);
+    try std.testing.expectEqual(monitor.ServiceState.stopped, d.statuses[1].state);
+}

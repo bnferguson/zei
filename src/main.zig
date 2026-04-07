@@ -120,6 +120,7 @@ comptime {
     _ = @import("config.zig");
     _ = @import("logger.zig");
     _ = @import("user_lookup.zig");
+    _ = @import("pidfd.zig");
     _ = @import("privilege.zig");
     _ = @import("process.zig");
     _ = @import("monitor.zig");

@@ -6,6 +6,7 @@ const config = @import("config.zig");
 const ipc = @import("ipc.zig");
 const logger = @import("logger.zig");
 const monitor = @import("monitor.zig");
+const pidfd = @import("pidfd.zig");
 const privilege = @import("privilege.zig");
 const process = @import("process.zig");
 const reaper = @import("reaper.zig");
@@ -125,6 +126,19 @@ pub const Daemon = struct {
         std.debug.assert(idx < self.cfg.services.len);
         const svc = &self.cfg.services[idx];
         const svc_log = self.log.forService(svc.name);
+        const state = self.statuses[idx].state;
+
+        // Guard against double-spawning. If the service is already running,
+        // starting, or mid-shutdown, skip the restart.
+        if (state == .running or state == .starting or state == .stopping) {
+            svc_log.warn("restart skipped, service is {s}", .{state.label()});
+            return;
+        }
+
+        // IPC restart preempts a pending scheduled restart.
+        if (state == .restart_pending) {
+            svc_log.info("preempting scheduled restart", .{});
+        }
 
         // On Linux as PID 1, we need to elevate before spawning
         // with different credentials. On macOS (testing), skip.
@@ -155,7 +169,7 @@ pub const Daemon = struct {
         const pid = status.pid orelse return;
         const svc_log = self.log.forService(self.cfg.services[idx].name);
 
-        posix.kill(pid, posix.SIG.TERM) catch |err| {
+        self.sendSignalToService(idx, posix.SIG.TERM) catch |err| {
             svc_log.err("SIGTERM failed: {s}", .{@errorName(err)});
             return;
         };
@@ -181,7 +195,7 @@ pub const Daemon = struct {
 
         // Force kill if still running.
         svc_log.warn("SIGTERM timeout, sending SIGKILL", .{});
-        posix.kill(pid, posix.SIG.KILL) catch |err| {
+        self.sendSignalToService(idx, posix.SIG.KILL) catch |err| {
             if (err != error.ProcessNotFound) {
                 svc_log.err("SIGKILL failed: {s}", .{@errorName(err)});
             }
@@ -221,6 +235,17 @@ pub const Daemon = struct {
         }
     }
 
+    /// Trigger restarts for services whose scheduled restart time has arrived.
+    /// Granularity is bounded by the signal loop's ~1s polling interval.
+    fn checkPendingRestarts(self: *Daemon) void {
+        const now = std.time.timestamp();
+        for (self.statuses, 0..) |*status, i| {
+            if (status.state != .restart_pending) continue;
+            const restart_at = status.restart_after orelse continue;
+            if (restart_at <= now) self.restartService(i);
+        }
+    }
+
     fn handleChildExit(self: *Daemon, pid: posix.pid_t, exit_info: monitor.ExitInfo) void {
         const idx = self.findServiceByPid(pid) orelse {
             // Orphaned process — log and move on.
@@ -256,18 +281,14 @@ pub const Daemon = struct {
                 } else {
                     svc_log.info("restarting ({d}/unlimited)", .{status.restart_count});
                 }
-                // NOTE: blocking sleep delays signal handling for the duration.
-                // Acceptable for short restart delays in a container init system.
-                // For long delays, consider timestamp-based scheduling.
-                const delay_ns = svc.restartDelayNs();
-                sleepNs(delay_ns);
-                self.restartService(idx);
+                const delay_s: i64 = @intCast(svc.restartDelayNs() / std.time.ns_per_s);
+                status.recordRestartPending(std.time.timestamp() + delay_s);
             },
             .schedule => {
                 const interval_ns = svc.intervalNs() orelse return;
                 svc_log.info("oneshot complete, next run in {d}ms", .{interval_ns / std.time.ns_per_ms});
-                sleepNs(interval_ns);
-                self.restartService(idx);
+                const interval_s: i64 = @intCast(interval_ns / std.time.ns_per_s);
+                status.recordRestartPending(std.time.timestamp() + interval_s);
             },
             .exhausted => {
                 status.recordFailed();
@@ -291,6 +312,8 @@ pub const Daemon = struct {
                     if (!srv.tryAccept(self)) break;
                 }
             }
+
+            self.checkPendingRestarts();
 
             const sig = signal.waitForSignal() orelse {
                 // Timeout — do a periodic reap in case we missed SIGCHLD.
@@ -334,12 +357,19 @@ pub const Daemon = struct {
             };
         }
 
+        // Cancel any pending restarts — no point restarting during shutdown.
+        for (self.statuses) |*status| {
+            if (status.state == .restart_pending) {
+                status.cancelRestartPending();
+            }
+        }
+
         // Send SIGTERM to all running services.
         for (self.statuses, 0..) |*status, i| {
             if (status.state == .running) {
                 if (status.pid) |pid| {
                     const svc_log = shutdown_log.forService(self.cfg.services[i].name);
-                    posix.kill(pid, posix.SIG.TERM) catch |err| {
+                    self.sendSignalToService(i, posix.SIG.TERM) catch |err| {
                         svc_log.err("SIGTERM failed: {s}", .{@errorName(err)});
                         continue;
                     };
@@ -359,10 +389,10 @@ pub const Daemon = struct {
         // Force kill any remaining services.
         if (self.hasRunningServices()) {
             shutdown_log.warn("timeout, sending SIGKILL to remaining services", .{});
-            for (self.statuses) |*status| {
+            for (self.statuses, 0..) |*status, i| {
                 if (status.state == .running or status.state == .stopping) {
                     if (status.pid) |pid| {
-                        posix.kill(pid, posix.SIG.KILL) catch |kill_err| {
+                        self.sendSignalToService(i, posix.SIG.KILL) catch |kill_err| {
                             if (kill_err == error.PermissionDenied) {
                                 shutdown_log.err("SIGKILL failed (EPERM) pid={d}", .{pid});
                             }
@@ -390,8 +420,8 @@ pub const Daemon = struct {
 
         for (self.statuses, 0..) |*status, i| {
             if (status.state == .running) {
-                if (status.pid) |pid| {
-                    posix.kill(pid, sig) catch |err| {
+                if (status.pid != null) {
+                    self.sendSignalToService(i, sig) catch |err| {
                         self.log.forService(self.cfg.services[i].name)
                             .err("signal {d} failed: {s}", .{ sig, @errorName(err) });
                     };
@@ -408,6 +438,27 @@ pub const Daemon = struct {
 
     // -- Helpers --
 
+    /// Send a signal to a service, preferring pidfd over kill(2) to avoid
+    /// PID-reuse races. Falls back to kill(2) when pidfd is unavailable.
+    pub fn sendSignalToService(self: *Daemon, idx: usize, sig: u8) !void {
+        std.debug.assert(idx < self.cfg.services.len);
+        const pid = self.statuses[idx].pid orelse return error.ProcessNotFound;
+
+        if (self.spawns[idx]) |spawn| {
+            if (spawn.pidfd) |pfd| {
+                if (pidfd.sendSignal(pfd, sig)) {
+                    return;
+                } else |err| switch (err) {
+                    error.Unsupported => {}, // fall through to kill(2)
+                    else => return err,
+                }
+            }
+        }
+
+        // Fallback: no pidfd available.
+        try posix.kill(pid, sig);
+    }
+
     fn findServiceByPid(self: *const Daemon, pid: posix.pid_t) ?usize {
         for (self.statuses, 0..) |*status, i| {
             if (status.pid != null and status.pid.? == pid) return i;
@@ -417,7 +468,8 @@ pub const Daemon = struct {
 
     fn hasRunningServices(self: *const Daemon) bool {
         for (self.statuses) |*status| {
-            if (status.state == .running or status.state == .stopping) return true;
+            if (status.state == .running or status.state == .stopping or
+                status.state == .restart_pending) return true;
         }
         return false;
     }
@@ -511,4 +563,51 @@ test "daemon hasRunningServices" {
 
     d.statuses[0].recordStarted(1);
     try std.testing.expect(d.hasRunningServices());
+}
+
+test "daemon hasRunningServices includes restart_pending" {
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
+
+    var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
+    defer d.deinit();
+
+    try std.testing.expect(!d.hasRunningServices());
+
+    d.statuses[0].recordRestartPending(999);
+    try std.testing.expect(d.hasRunningServices());
+}
+
+test "checkPendingRestarts skips future timestamps" {
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
+
+    var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
+    defer d.deinit();
+
+    // Schedule a restart far in the future.
+    d.statuses[0].recordRestartPending(std.time.timestamp() + 9999);
+    d.checkPendingRestarts();
+
+    // Should still be pending — not yet triggered.
+    try std.testing.expectEqual(monitor.ServiceState.restart_pending, d.statuses[0].state);
+}
+
+test "restartService no-ops when service is running" {
+    var cfg = try config.load(std.testing.allocator, "example/zei.yaml");
+    defer cfg.deinit();
+
+    var d = try Daemon.init(std.testing.allocator, &cfg, "appuser", "appgroup");
+    defer d.deinit();
+
+    // Simulate a running service.
+    d.statuses[0].recordStarted(12345);
+    const pid_before = d.statuses[0].pid;
+
+    // restartService should be a no-op — service is already running.
+    d.restartService(0);
+
+    // PID unchanged, still running.
+    try std.testing.expectEqual(monitor.ServiceState.running, d.statuses[0].state);
+    try std.testing.expectEqual(pid_before, d.statuses[0].pid);
 }

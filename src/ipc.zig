@@ -135,6 +135,10 @@ fn writeServiceStatus(w: anytype, svc: *const config.Service, status: *const mon
         try w.writeAll(",\"start_time\":");
         try std.fmt.format(w, "{d}", .{started});
     }
+    if (status.restart_after) |restart_at| {
+        try w.writeAll(",\"restart_at\":");
+        try std.fmt.format(w, "{d}", .{restart_at});
+    }
     try w.writeByte('}');
 }
 
@@ -411,7 +415,7 @@ pub const Server = struct {
             defer privilege.drop(d.app_user, d.app_group) catch {};
         }
 
-        posix.kill(pid, sig) catch |err| {
+        d.sendSignalToService(idx, sig) catch |err| {
             self.log.err("signal failed: {s}", .{@errorName(err)});
             writeResponse(fbs.writer(), false, "signal delivery failed", null, null) catch return;
             _ = posix.write(fd, fbs.getWritten()) catch {};

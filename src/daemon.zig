@@ -122,12 +122,10 @@ pub const Daemon = struct {
         }
     }
 
-    /// Restart a service after evaluating the restart decision.
-    /// Handles privilege elevation/dropping for credential-based spawning.
     /// Restart a service. Non-blocking: if the service is running, sends
     /// SIGTERM and sets a flag so handleChildExit starts it after exit.
     pub fn restartService(self: *Daemon, idx: usize) void {
-        if (idx >= self.cfg.services.len) return;
+        std.debug.assert(idx < self.cfg.services.len);
         const svc = &self.cfg.services[idx];
         const svc_log = self.log.forService(svc.name);
         const status = &self.statuses[idx];
@@ -283,13 +281,13 @@ pub const Daemon = struct {
                 } else {
                     svc_log.info("restarting ({d}/unlimited)", .{status.restart_count});
                 }
-                const delay_ms: i64 = @intCast(@divExact(svc.restartDelayNs(), std.time.ns_per_ms));
+                const delay_ms: i64 = @intCast(svc.restartDelayNs() / std.time.ns_per_ms);
                 status.recordRestartPending(std.time.milliTimestamp() + delay_ms);
             },
             .schedule => {
                 const interval_ns = svc.intervalNs() orelse return;
-                svc_log.info("oneshot complete, next run in {d}ms", .{@divExact(interval_ns, std.time.ns_per_ms)});
-                const interval_ms: i64 = @intCast(@divExact(interval_ns, std.time.ns_per_ms));
+                const interval_ms: i64 = @intCast(interval_ns / std.time.ns_per_ms);
+                svc_log.info("oneshot complete, next run in {d}ms", .{interval_ms});
                 status.recordRestartPending(std.time.milliTimestamp() + interval_ms);
             },
             .exhausted => {
@@ -424,7 +422,8 @@ pub const Daemon = struct {
         defer self.dropPrivileges();
 
         for (self.statuses, 0..) |*status, i| {
-            if (status.state == .running and status.pid != null) {
+            if (status.state == .running) {
+                std.debug.assert(status.pid != null);
                 self.sendSignalToService(i, sig) catch |err| {
                     self.log.forService(self.cfg.services[i].name)
                         .err("signal {d} failed: {s}", .{ sig, @errorName(err) });
@@ -462,7 +461,7 @@ pub const Daemon = struct {
     /// Send a signal to a service, preferring pidfd over kill(2) to avoid
     /// PID-reuse races. Falls back to kill(2) when pidfd is unavailable.
     pub fn sendSignalToService(self: *Daemon, idx: usize, sig: u8) !void {
-        if (idx >= self.cfg.services.len) return error.ProcessNotFound;
+        std.debug.assert(idx < self.cfg.services.len);
         const pid = self.statuses[idx].pid orelse return error.ProcessNotFound;
 
         if (self.spawns[idx]) |spawn| {
@@ -476,9 +475,9 @@ pub const Daemon = struct {
             }
         }
 
-        // Fallback: no pidfd available. Guard pid > 0 because
-        // kill(2) interprets 0 and negative pids as process groups.
-        if (pid <= 0) return error.ProcessNotFound;
+        // Fallback: no pidfd available. Pids from fork() are always
+        // positive; kill(2) interprets 0 and negatives as process groups.
+        std.debug.assert(pid > 0);
         try posix.kill(pid, sig);
     }
 

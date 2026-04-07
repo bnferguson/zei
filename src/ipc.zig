@@ -319,13 +319,13 @@ pub const Server = struct {
     /// Serialize a response with service data using a dynamically-sized buffer.
     /// Falls back to a simple error response if allocation fails.
     fn writeAllocResponse(fd: posix.fd_t, d: *daemon.Daemon, service: ?[]const u8) void {
-        var list: std.ArrayList(u8) = .empty;
-        defer list.deinit(d.allocator);
-        writeResponse(list.writer(d.allocator), true, null, d, service) catch {
+        var buf: std.ArrayList(u8) = .empty;
+        defer buf.deinit(d.allocator);
+        writeResponse(buf.writer(d.allocator), true, null, d, service) catch {
             sendSimpleResponse(fd, false, "response serialization failed");
             return;
         };
-        _ = posix.write(fd, list.items) catch {};
+        _ = posix.write(fd, buf.items) catch {};
     }
 
     fn handleRestart(self: *Server, fd: posix.fd_t, d: *daemon.Daemon, service: ?[]const u8) void {
@@ -415,7 +415,6 @@ fn parseSignalName(name: []const u8) ?u8 {
 /// Caller must call deinit() when done.
 pub const Response = struct {
     buf: []u8,
-    len: usize,
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: *Response) void {
@@ -424,7 +423,7 @@ pub const Response = struct {
     }
 
     pub fn slice(self: *const Response) []const u8 {
-        return self.buf[0..self.len];
+        return self.buf;
     }
 };
 
@@ -433,10 +432,12 @@ pub fn sendRequest(allocator: std.mem.Allocator, req: Request) !Response {
 
     // Connect via Unix socket.
     const fd = try posix.socket(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
-    errdefer posix.close(fd);
+    defer posix.close(fd);
     try posix.connect(fd, &addr.any, addr.getOsSockLen());
 
     // Set a read timeout so the CLI doesn't hang if the daemon stalls.
+    // Best-effort — a missing timeout is annoying (CLI hangs) but not
+    // a security issue, unlike the daemon side where it blocks signals.
     const timeout = std.c.timeval{ .sec = 5, .usec = 0 };
     posix.setsockopt(fd, posix.SOL.SOCKET, posix.SO.RCVTIMEO, std.mem.asBytes(&timeout)) catch {};
 
@@ -474,10 +475,8 @@ pub fn sendRequest(allocator: std.mem.Allocator, req: Request) !Response {
         if (n == 0) break;
         try resp.appendSlice(allocator, read_buf[0..n]);
     }
-    posix.close(fd);
 
-    const owned = try resp.toOwnedSlice(allocator);
-    return .{ .buf = owned, .len = owned.len, .allocator = allocator };
+    return .{ .buf = try resp.toOwnedSlice(allocator), .allocator = allocator };
 }
 
 // -- Tests --

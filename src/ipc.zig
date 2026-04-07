@@ -38,8 +38,8 @@ fn checkPeerCredentials(fd: posix.fd_t, app_uid: posix.uid_t, log: logger.Logger
     if (builtin.os.tag != .linux) return true;
 
     var cred: Ucred = undefined;
-    posix.getsockopt(fd, posix.SOL.SOCKET, posix.SO.PEERCRED, std.mem.asBytes(&cred)) catch {
-        log.err("SO_PEERCRED failed", .{});
+    posix.getsockopt(fd, posix.SOL.SOCKET, posix.SO.PEERCRED, std.mem.asBytes(&cred)) catch |err| {
+        log.err("SO_PEERCRED failed: {s}", .{@errorName(err)});
         return false;
     };
 

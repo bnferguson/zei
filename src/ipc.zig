@@ -165,6 +165,9 @@ pub const Server = struct {
             log.err("failed to resolve app user '{s}:{s}': {s}", .{ app_user, app_group, @errorName(err) });
             return err;
         };
+        // The security model assumes a non-root app user — directory ownership
+        // and SO_PEERCRED checks are meaningless if the app user is root.
+        std.debug.assert(creds.uid != 0);
 
         // Ensure the socket directory exists with restrictive permissions.
         // 0o700 = owner only — service users (different UIDs) cannot access.
@@ -217,7 +220,11 @@ pub const Server = struct {
 
     pub fn deinit(self: *Server) void {
         self.server.deinit();
-        std.fs.deleteFileAbsolute(socket_path) catch {};
+        std.fs.deleteFileAbsolute(socket_path) catch |err| {
+            if (err != error.FileNotFound) {
+                self.log.warn("failed to remove socket: {s}", .{@errorName(err)});
+            }
+        };
         self.* = undefined;
     }
 
@@ -253,8 +260,8 @@ pub const Server = struct {
         // Set a read timeout to prevent a slow/malicious client from blocking
         // the daemon's signal loop indefinitely. Drop the connection if it
         // fails — proceeding without a timeout defeats the purpose.
-        if (builtin.os.tag == .linux) {
-            const timeout = std.os.linux.timeval{ .sec = 2, .usec = 0 };
+        {
+            const timeout = std.c.timeval{ .sec = 2, .usec = 0 };
             posix.setsockopt(
                 conn.stream.handle,
                 posix.SOL.SOCKET,
@@ -621,6 +628,8 @@ test "checkPeerCredentials rejects unauthorized uid on Linux" {
     const log = logger.Logger.initFromEnv().scoped("test");
 
     // Set app_uid to something that doesn't match the peer — should reject.
+    // Wrapping add handles maxInt(u32) edge case; wrapping to 0 (root) is
+    // fine since root peers are already skipped above.
     const non_matching_uid = cred.uid +% 1;
     try std.testing.expect(!checkPeerCredentials(@intCast(fds[0]), non_matching_uid, log));
 }

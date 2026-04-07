@@ -45,8 +45,10 @@ CMD ["zig", "build", "test", "--summary", "all"]
 # Runtime stage
 FROM alpine:3.21
 
-# Create non-root users and groups matching pei's test users
-RUN adduser -D -u 1000 appuser \
+# Create non-root users and groups matching zei's test users.
+# Must mirror the test stage so privilege.drop behaves the same.
+RUN addgroup -g 1000 appgroup \
+    && adduser -D -u 1000 -G appgroup appuser \
     && adduser -D -u 1001 worker \
     && adduser -D -u 1002 monitor \
     && adduser -D -u 1003 zombie

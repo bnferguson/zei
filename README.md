@@ -94,7 +94,7 @@ zei restart worker          # restart a service
 zei signal web:HUP          # send a signal to a service
 ```
 
-The CLI talks to the daemon over a Unix socket at `/tmp/zei.sock`. If the daemon isn't running, `list` and `status` fall back to reading the config file.
+The CLI talks to the daemon over a Unix socket at `/run/zei/zei.sock`. If the daemon isn't running, `list` and `status` fall back to reading the config file.
 
 You can use signal names with or without the `SIG` prefix: `HUP`, `TERM`, `KILL`, `USR1`, `USR2`.
 

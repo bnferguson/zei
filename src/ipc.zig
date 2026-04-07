@@ -20,11 +20,11 @@ pub const max_connections_per_poll = 4;
 
 /// Linux ucred struct returned by SO_PEERCRED. Defined here rather than via
 /// @cImport because the libc header requires _GNU_SOURCE, and the layout
-/// (pid_t + uid_t + gid_t = i32 + u32 + u32) is stable across Linux.
+/// is stable across Linux architectures.
 const Ucred = extern struct {
-    pid: i32,
-    uid: u32,
-    gid: u32,
+    pid: posix.pid_t,
+    uid: posix.uid_t,
+    gid: posix.gid_t,
 
     comptime {
         std.debug.assert(@sizeOf(Ucred) == 12);

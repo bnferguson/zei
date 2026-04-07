@@ -57,8 +57,8 @@ pub const Logger = struct {
 
     /// Create a logger configured from ZEI_LOG_LEVEL and ZEI_LOG_FORMAT env vars.
     pub fn initFromEnv() Logger {
-        const level_str: ?[]const u8 = if (std.posix.getenv("ZEI_LOG_LEVEL")) |v| v else null;
-        const format_str: ?[]const u8 = if (std.posix.getenv("ZEI_LOG_FORMAT")) |v| v else null;
+        const level_str = std.posix.getenv("ZEI_LOG_LEVEL");
+        const format_str = std.posix.getenv("ZEI_LOG_FORMAT");
         return init(
             stderrWriter(),
             Level.parse(level_str),

@@ -207,7 +207,10 @@ pub const Server = struct {
             .force_nonblocking = true,
             .kernel_backlog = 8,
         });
-        errdefer server.deinit();
+        errdefer {
+            server.deinit();
+            std.fs.deleteFileAbsolute(socket_path) catch {};
+        }
 
         log.info("IPC server listening on {s}", .{socket_path});
 

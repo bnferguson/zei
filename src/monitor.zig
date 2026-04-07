@@ -157,8 +157,10 @@ pub fn evaluateRestart(
         return .stop;
     }
 
-    // If the daemon is shutting down (stopping state), never restart.
-    if (status.state == .stopping) return .stop;
+    // Note: by the time evaluateRestart is called, recordExited has
+    // already transitioned the state to .stopped. The shutting_down
+    // check and restart_after_stop flag in handleChildExit handle
+    // the cases where we should not follow restart policy.
 
     const should_restart = switch (svc.restart) {
         .always => true,
@@ -354,13 +356,17 @@ test "max_restarts: zero means unlimited" {
 
 // -- evaluateRestart tests: stopping state --
 
-test "stopping state: never restart regardless of policy" {
+test "evaluateRestart after recordExited follows policy" {
+    // evaluateRestart is always called after recordExited, which sets
+    // state to .stopped. Stopping-vs-restart is handled by the
+    // restart_after_stop flag in handleChildExit, not by evaluateRestart.
     const svc = testService(.{ .restart = .always });
     var status = ServiceStatus.init("test-svc");
     status.recordStarted(1);
     status.recordStopping();
+    status.recordExited(.{ .exited = 0 });
     const decision = evaluateRestart(&svc, &status, .{ .exited = 0 });
-    try std.testing.expectEqual(RestartDecision.stop, decision);
+    try std.testing.expectEqual(RestartDecision.restart, decision);
 }
 
 // -- evaluateRestart tests: oneshot --

@@ -13,6 +13,9 @@ const reaper = @import("reaper.zig");
 const signal = @import("signal.zig");
 const user_lookup = @import("user_lookup.zig");
 
+/// Grace period (ms) after SIGTERM before escalating to SIGKILL.
+const kill_timeout_ms: i64 = 5000;
+
 pub const Daemon = struct {
     cfg: *config.Config,
     statuses: []monitor.ServiceStatus,
@@ -153,7 +156,7 @@ pub const Daemon = struct {
                 };
                 status.recordStopping();
                 status.restart_after_stop = true;
-                status.kill_deadline = std.time.milliTimestamp() + 5000;
+                status.kill_deadline = std.time.milliTimestamp() + kill_timeout_ms;
 
                 if (builtin.os.tag == .linux) {
                     privilege.drop(self.app_user, self.app_group) catch |err| {
@@ -285,8 +288,10 @@ pub const Daemon = struct {
         if (self.shutting_down) return;
 
         // IPC-requested restart takes priority over policy evaluation.
+        // Reset restart_count since this is an explicit user action.
         if (status.restart_after_stop) {
             status.restart_after_stop = false;
+            status.restart_count = 0;
             svc_log.info("restarting after stop", .{});
             self.doStartService(idx);
             return;

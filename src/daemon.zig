@@ -131,7 +131,7 @@ pub const Daemon = struct {
         // Guard against double-spawning. If the service is already running,
         // starting, or mid-shutdown, skip the restart.
         if (state == .running or state == .starting or state == .stopping) {
-            svc_log.warn("restart skipped, service is {s}", .{state.label()});
+            svc_log.warn("restart skipped, service is {s}", .{@tagName(state)});
             return;
         }
 

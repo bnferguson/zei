@@ -10,9 +10,6 @@ pub const ServiceState = enum {
     restart_pending,
     failed,
 
-    pub fn label(self: ServiceState) [:0]const u8 {
-        return @tagName(self);
-    }
 };
 
 /// How a child process exited.
@@ -379,13 +376,13 @@ test "oneshot with interval: schedule even on failure" {
     try std.testing.expectEqual(RestartDecision.schedule, decision);
 }
 
-// -- ServiceState.label tests --
+// -- ServiceState @tagName tests --
 
-test "ServiceState.label returns correct strings" {
-    try std.testing.expectEqualStrings("stopped", ServiceState.stopped.label());
-    try std.testing.expectEqualStrings("running", ServiceState.running.label());
-    try std.testing.expectEqualStrings("failed", ServiceState.failed.label());
-    try std.testing.expectEqualStrings("restart_pending", ServiceState.restart_pending.label());
+test "ServiceState @tagName returns correct strings" {
+    try std.testing.expectEqualStrings("stopped", @tagName(ServiceState.stopped));
+    try std.testing.expectEqualStrings("running", @tagName(ServiceState.running));
+    try std.testing.expectEqualStrings("failed", @tagName(ServiceState.failed));
+    try std.testing.expectEqualStrings("restart_pending", @tagName(ServiceState.restart_pending));
 }
 
 // -- restart_pending state transition tests --

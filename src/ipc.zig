@@ -56,10 +56,6 @@ pub const Command = enum {
     status,
     restart,
     signal,
-
-    pub fn parse(s: []const u8) ?Command {
-        return std.meta.stringToEnum(Command, s);
-    }
 };
 
 pub const Request = struct {
@@ -299,7 +295,7 @@ pub const Server = struct {
             return;
         };
 
-        const cmd = Command.parse(req.value.command) orelse {
+        const cmd = std.meta.stringToEnum(Command, req.value.command) orelse {
             self.writeError(fd, "unknown command");
             return;
         };
@@ -540,15 +536,15 @@ test "writeResponse with service statuses" {
     try std.testing.expect(std.mem.indexOf(u8, output, "\"state\":\"stopped\"") != null);
 }
 
-test "Command.parse valid commands" {
-    try std.testing.expectEqual(Command.list, Command.parse("list").?);
-    try std.testing.expectEqual(Command.status, Command.parse("status").?);
-    try std.testing.expectEqual(Command.restart, Command.parse("restart").?);
-    try std.testing.expectEqual(Command.signal, Command.parse("signal").?);
+test "Command enum parses valid commands" {
+    try std.testing.expectEqual(Command.list, std.meta.stringToEnum(Command, "list").?);
+    try std.testing.expectEqual(Command.status, std.meta.stringToEnum(Command, "status").?);
+    try std.testing.expectEqual(Command.restart, std.meta.stringToEnum(Command, "restart").?);
+    try std.testing.expectEqual(Command.signal, std.meta.stringToEnum(Command, "signal").?);
 }
 
-test "Command.parse invalid command" {
-    try std.testing.expect(Command.parse("invalid") == null);
+test "Command enum rejects invalid command" {
+    try std.testing.expect(std.meta.stringToEnum(Command, "invalid") == null);
 }
 
 test "parseSignalName valid signals" {

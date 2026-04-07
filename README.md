@@ -1,6 +1,6 @@
 # zei
 
-A small, fast init system for containers. zei runs as PID 1 inside Docker. It manages your services, reaps zombies, and shuts down cleanly.
+A small, fast init system for Linux containers. zei runs as PID 1 inside Docker. It manages your services, reaps zombies, and shuts down cleanly.
 
 ## Why?
 
@@ -108,30 +108,21 @@ zei starts as PID 1, blocks signals, loads your config, and spawns each service 
 
 ### Privilege model
 
-The zei binary uses the suid bit. This lets it start as a non-root user but still spawn services as different users. It goes to root only when it needs to spawn or signal a process, then drops back down. The real UID stays at root while the effective UID runs as your app user.
-
-> [!NOTE]
-> The privilege cycling only applies on Linux. On macOS (useful for running tests locally), zei skips the elevation/drop calls.
+The zei binary uses the suid bit. This lets it start as a non-root user but still spawn services as different users. It elevates to root only when it needs to spawn or signal a process, then drops back down. The real UID stays at root while the effective UID runs as your app user.
 
 ## Development
 
-You need [Zig 0.15.2](https://ziglang.org/download/).
+You need [Zig 0.15.2](https://ziglang.org/download/) and Docker.
+
+zei is Linux-only. The build defaults to cross-compiling for Linux, so `zig build` works on macOS for syntax checking, but tests must run in Docker:
 
 ```sh
-zig build                          # build
-zig build test --summary all       # run unit tests
+zig build                          # cross-compile (syntax check from macOS)
+make docker-test                   # run unit tests in a Linux container
+make docker-e2e                    # end-to-end tests (starts containers, exercises the CLI)
 ```
 
-Unit tests live next to their source in each `.zig` file. Some tests need a local `appuser` account and will skip if it's missing.
-
-### Docker tests
-
-Some tests only work on Linux because they need PID 1, privilege dropping, and zombie reaping. Run them through Docker:
-
-```sh
-make docker-test    # unit tests in a Linux container
-make docker-e2e     # end-to-end tests (starts containers, exercises the CLI)
-```
+Unit tests live next to their source in each `.zig` file.
 
 The e2e suite (`test/e2e.sh`) builds the image, starts zei with different configs, and uses `docker exec` to check that things work.
 

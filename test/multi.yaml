@@ -2,7 +2,7 @@ version: "1.0"
 
 services:
   echo:
-    command: ["sh", "-c", "trap 'exit 0' TERM; while true; do echo 'echo running'; sleep 2 & wait; done"]
+    command: ["/bin/sh", "-c", "trap 'exit 0' TERM; while true; do echo 'echo running'; sleep 2 & wait; done"]
     user: appuser
     group: appuser
     restart: always
@@ -10,7 +10,7 @@ services:
     restart_delay: 1s
 
   worker:
-    command: ["sh", "-c", "trap 'exit 0' TERM; while true; do echo 'worker running'; sleep 3 & wait; done"]
+    command: ["/bin/sh", "-c", "trap 'exit 0' TERM; while true; do echo 'worker running'; sleep 3 & wait; done"]
     user: worker
     group: worker
     restart: on-failure
@@ -18,7 +18,7 @@ services:
     restart_delay: 1s
 
   monitor:
-    command: ["sh", "-c", "echo 'health check'; sleep 1"]
+    command: ["/bin/sh", "-c", "echo 'health check'; sleep 1"]
     user: monitor
     group: monitor
     interval: 10s

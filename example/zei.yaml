@@ -2,7 +2,7 @@ version: "1.0"
 
 services:
   echo:
-    command: ["sh", "-c", "while true; do echo 'echo service running'; sleep 5; done"]
+    command: ["/bin/sh", "-c", "while true; do echo 'echo service running'; sleep 5; done"]
     user: appuser
     group: appuser
     restart: always
@@ -10,7 +10,7 @@ services:
     restart_delay: 5s
 
   counter:
-    command: ["sh", "-c", "i=0; while true; do echo \"counter: $i\"; i=$((i+1)); sleep 2; done"]
+    command: ["/bin/sh", "-c", "i=0; while true; do echo \"counter: $i\"; i=$((i+1)); sleep 2; done"]
     user: worker
     group: worker
     restart: on-failure
@@ -18,7 +18,7 @@ services:
     restart_delay: 2s
 
   healthcheck:
-    command: ["sh", "-c", "echo 'Health check running at $(date)'; sleep 1"]
+    command: ["/bin/sh", "-c", "echo 'Health check running at $(date)'; sleep 1"]
     user: monitor
     group: monitor
     interval: 30s
@@ -38,7 +38,7 @@ services:
       LOG_LEVEL: debug
 
   signal_handler:
-    command: ["sh", "/example/signal-handler.sh"]
+    command: ["/bin/sh", "/example/signal-handler.sh"]
     user: appuser
     group: appuser
     restart: always
@@ -46,7 +46,7 @@ services:
     restart_delay: 5s
 
   json_logger:
-    command: ["sh", "/example/json-logger.sh"]
+    command: ["/bin/sh", "/example/json-logger.sh"]
     user: appuser
     group: appuser
     restart: always

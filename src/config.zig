@@ -140,9 +140,12 @@ fn loadFromSource(allocator: std.mem.Allocator, source: [:0]const u8) !Config {
 // All allocations use the arena, so partial failure is cleaned up by the
 // caller's errdefer arena.deinit().
 fn parseService(alloc: std.mem.Allocator, name: []const u8, map: Yaml.Map) !Service {
+    const command = try parseStringList(alloc, map.get("command")) orelse return LoadError.ParseFailed;
+    try validateCommand(command);
+
     return .{
         .name = try alloc.dupe(u8, name),
-        .command = try parseStringList(alloc, map.get("command")) orelse return LoadError.ParseFailed,
+        .command = command,
         .user = try dupeScalar(alloc, map.get("user")) orelse return LoadError.ParseFailed,
         .group = try dupeScalar(alloc, map.get("group")) orelse return LoadError.ParseFailed,
         .working_dir = try dupeScalar(alloc, map.get("working_dir")),
@@ -157,6 +160,22 @@ fn parseService(alloc: std.mem.Allocator, name: []const u8, map: Yaml.Map) !Serv
         .oneshot = parseBool(map.get("oneshot")),
         .json_logs = parseBool(map.get("json_logs")),
     };
+}
+
+// -- Validation --
+
+/// Reject commands that use relative paths, path traversal, or null bytes.
+/// Does NOT check file existence — the binary may be volume-mounted at runtime.
+fn validateCommand(command: []const []const u8) LoadError!void {
+    if (command.len == 0) return LoadError.ParseFailed;
+
+    const exe = command[0];
+    if (exe.len == 0 or exe[0] != '/') return LoadError.ParseFailed;
+    if (std.mem.indexOf(u8, exe, "..") != null) return LoadError.ParseFailed;
+
+    for (command) |arg| {
+        if (std.mem.indexOfScalar(u8, arg, 0) != null) return LoadError.ParseFailed;
+    }
 }
 
 // -- YAML extraction helpers --
@@ -303,6 +322,26 @@ test "load parses json_logs flag" {
 test "load returns error for missing file" {
     const result = load(std.testing.allocator, "nonexistent.yaml");
     try std.testing.expectError(LoadError.FileNotFound, result);
+}
+
+test "validateCommand accepts absolute path" {
+    try validateCommand(&.{"/bin/sh", "-c", "echo hello"});
+}
+
+test "validateCommand rejects relative path" {
+    try std.testing.expectError(LoadError.ParseFailed, validateCommand(&.{"sh", "-c", "echo hello"}));
+}
+
+test "validateCommand rejects path traversal" {
+    try std.testing.expectError(LoadError.ParseFailed, validateCommand(&.{"/usr/../bin/sh"}));
+}
+
+test "validateCommand rejects null byte in argument" {
+    try std.testing.expectError(LoadError.ParseFailed, validateCommand(&.{"/bin/sh", "-c", "echo\x00injected"}));
+}
+
+test "validateCommand rejects empty command" {
+    try std.testing.expectError(LoadError.ParseFailed, validateCommand(&.{}));
 }
 
 test "load rejects service missing user field" {

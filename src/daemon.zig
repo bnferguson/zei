@@ -177,21 +177,7 @@ pub const Daemon = struct {
 
         // Wait up to 5 seconds for the specific PID (not reapAndProcess,
         // which would trigger auto-restart logic and re-enter restartService).
-        var waited: u32 = 0;
-        while (waited < 50) : (waited += 1) {
-            var wait_status: c_int = 0;
-            const rc = std.c.waitpid(pid, &wait_status, std.c.W.NOHANG);
-            if (rc > 0) {
-                // Child exited — update status directly.
-                if (self.spawns[idx]) |*s| {
-                    s.deinit();
-                    self.spawns[idx] = null;
-                }
-                status.recordExited(reaper.parseWaitStatus(@bitCast(wait_status)));
-                return;
-            }
-            posix.nanosleep(0, 100_000_000); // 100ms
-        }
+        if (self.waitForExit(idx, pid, 50)) return;
 
         // Force kill if still running.
         svc_log.warn("SIGTERM timeout, sending SIGKILL", .{});
@@ -202,22 +188,31 @@ pub const Daemon = struct {
             return;
         };
 
-        // Wait up to 2 seconds for exit after SIGKILL (bounded, not blocking).
-        var kill_waited: u32 = 0;
-        while (kill_waited < 20) : (kill_waited += 1) {
-            var kill_status: c_int = 0;
-            const rc = std.c.waitpid(pid, &kill_status, std.c.W.NOHANG);
+        // Wait up to 2 seconds for exit after SIGKILL.
+        if (self.waitForExit(idx, pid, 20)) return;
+
+        svc_log.err("process pid={d} did not exit after SIGKILL", .{pid});
+    }
+
+    /// Poll waitpid for a specific PID up to `max_polls` times (100ms each).
+    /// On exit, cleans up the spawn and records the exit status.
+    /// Returns true if the process exited, false if it's still running.
+    fn waitForExit(self: *Daemon, idx: usize, pid: posix.pid_t, max_polls: u32) bool {
+        var polls: u32 = 0;
+        while (polls < max_polls) : (polls += 1) {
+            var wait_status: c_int = 0;
+            const rc = std.c.waitpid(pid, &wait_status, std.c.W.NOHANG);
             if (rc > 0) {
                 if (self.spawns[idx]) |*s| {
                     s.deinit();
                     self.spawns[idx] = null;
                 }
-                status.recordExited(reaper.parseWaitStatus(@bitCast(kill_status)));
-                return;
+                self.statuses[idx].recordExited(reaper.parseWaitStatus(@bitCast(wait_status)));
+                return true;
             }
             posix.nanosleep(0, 100_000_000); // 100ms
         }
-        svc_log.err("process pid={d} did not exit after SIGKILL", .{pid});
+        return false;
     }
 
     // -- Reaping and restart evaluation --

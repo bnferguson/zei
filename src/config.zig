@@ -218,8 +218,12 @@ fn parseEnvironment(alloc: std.mem.Allocator, value: ?Yaml.Value) !?EnvironmentM
     const map = (value orelse return null).asMap() orelse return null;
     var env: EnvironmentMap = .{};
     for (map.keys(), map.values()) |key, val| {
+        const v_str = val.asScalar() orelse return LoadError.ParseFailed;
+        // Reject null bytes — they cause truncation at the C exec boundary.
+        if (std.mem.indexOfScalar(u8, key, 0) != null) return LoadError.ParseFailed;
+        if (std.mem.indexOfScalar(u8, v_str, 0) != null) return LoadError.ParseFailed;
         const k = try alloc.dupe(u8, key);
-        const v = try alloc.dupe(u8, val.asScalar() orelse return LoadError.ParseFailed);
+        const v = try alloc.dupe(u8, v_str);
         try env.put(alloc, k, v);
     }
     return env;

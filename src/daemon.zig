@@ -122,8 +122,6 @@ pub const Daemon = struct {
         }
     }
 
-    /// Restart a service after evaluating the restart decision.
-    /// Handles privilege elevation/dropping for credential-based spawning.
     /// Restart a service. Non-blocking: if the service is running, sends
     /// SIGTERM and sets a flag so handleChildExit starts it after exit.
     pub fn restartService(self: *Daemon, idx: usize) void {
@@ -283,13 +281,13 @@ pub const Daemon = struct {
                 } else {
                     svc_log.info("restarting ({d}/unlimited)", .{status.restart_count});
                 }
-                const delay_ms: i64 = @intCast(@divExact(svc.restartDelayNs(), std.time.ns_per_ms));
+                const delay_ms: i64 = @intCast(svc.restartDelayNs() / std.time.ns_per_ms);
                 status.recordRestartPending(std.time.milliTimestamp() + delay_ms);
             },
             .schedule => {
                 const interval_ns = svc.intervalNs() orelse return;
-                svc_log.info("oneshot complete, next run in {d}ms", .{@divExact(interval_ns, std.time.ns_per_ms)});
-                const interval_ms: i64 = @intCast(@divExact(interval_ns, std.time.ns_per_ms));
+                const interval_ms: i64 = @intCast(interval_ns / std.time.ns_per_ms);
+                svc_log.info("oneshot complete, next run in {d}ms", .{interval_ms});
                 status.recordRestartPending(std.time.milliTimestamp() + interval_ms);
             },
             .exhausted => {
@@ -373,8 +371,7 @@ pub const Daemon = struct {
         // Send SIGTERM to all running services.
         for (self.statuses, 0..) |*status, i| {
             if (status.state == .running) {
-                // Running services always have a pid (set by recordStarted).
-                const pid = status.pid.?;
+                const pid = status.pid orelse continue;
                 const svc_log = shutdown_log.forService(self.cfg.services[i].name);
                 self.sendSignalToService(i, posix.SIG.TERM) catch |err| {
                     svc_log.err("SIGTERM failed: {s}", .{@errorName(err)});
@@ -401,10 +398,11 @@ pub const Daemon = struct {
             shutdown_log.warn("timeout, sending SIGKILL to remaining services", .{});
             for (self.statuses, 0..) |*status, i| {
                 if (status.state == .running or status.state == .stopping) {
-                    std.debug.assert(status.pid != null);
                     self.sendSignalToService(i, posix.SIG.KILL) catch |kill_err| {
                         if (kill_err == error.PermissionDenied) {
-                            shutdown_log.err("SIGKILL failed (EPERM) pid={d}", .{status.pid.?});
+                            if (status.pid) |pid| {
+                                shutdown_log.err("SIGKILL failed (EPERM) pid={d}", .{pid});
+                            }
                         }
                     };
                 }
@@ -477,8 +475,8 @@ pub const Daemon = struct {
             }
         }
 
-        // Fallback: no pidfd available. Assert pid > 0 because
-        // kill(2) interprets 0 and negative pids as process groups.
+        // Fallback: no pidfd available. Pids from fork() are always
+        // positive; kill(2) interprets 0 and negatives as process groups.
         std.debug.assert(pid > 0);
         try posix.kill(pid, sig);
     }
